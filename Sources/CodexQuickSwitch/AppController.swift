@@ -26,6 +26,7 @@ final class AppController: NSObject, NSMenuDelegate {
     private var isRefreshing = false
     private var isSwitching = false
     private var statusNotice: String?
+    private var loadWarningNotice: String?
     private var lastRefreshAt: Date?
     private var refreshTimer: Timer?
     private var settingsWindowController: SettingsWindowController?
@@ -55,11 +56,15 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private func runMigrationIfNeeded() {
-        var currentSettings = store.loadSettings()
+        let settingsResult = store.loadSettingsResult()
+        var currentSettings = settingsResult.settings
         let migrationResult = store.migrateLegacyCredentialsIfNeeded(settings: &currentSettings)
 
         settings = currentSettings
         try? store.saveSettings(settings)
+
+        let issues = settingsResult.issues.map(\.message)
+        loadWarningNotice = issues.isEmpty ? nil : issues.joined(separator: "；")
 
         if !migrationResult.errors.isEmpty {
             statusNotice = migrationResult.errors.joined(separator: "；")
@@ -69,8 +74,14 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private func reloadLocalState() {
-        profiles = store.loadProfiles()
-        settings = store.loadSettings()
+        let profilesResult = store.loadProfilesResult()
+        let settingsResult = store.loadSettingsResult()
+
+        profiles = profilesResult.profiles
+        settings = settingsResult.settings
+
+        let issues = (profilesResult.issues + settingsResult.issues).map(\.message)
+        loadWarningNotice = issues.isEmpty ? nil : issues.joined(separator: "；")
     }
 
     private func applySettingsSideEffects(showErrorsInStatus: Bool) {
@@ -276,6 +287,10 @@ final class AppController: NSObject, NSMenuDelegate {
     private func currentStatusLine() -> String {
         if let statusNotice, !statusNotice.isEmpty {
             return "状态：\(statusNotice)"
+        }
+
+        if let loadWarningNotice, !loadWarningNotice.isEmpty {
+            return "状态：\(loadWarningNotice)"
         }
 
         if let currentError, !currentError.isEmpty {

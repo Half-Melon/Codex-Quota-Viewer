@@ -9,6 +9,20 @@ struct MigrationResult {
     }
 }
 
+struct LoadIssue: Equatable {
+    let message: String
+}
+
+struct ProfilesLoadResult {
+    let profiles: [CodexProfile]
+    let issues: [LoadIssue]
+}
+
+struct SettingsLoadResult {
+    let settings: AppSettings
+    let issues: [LoadIssue]
+}
+
 enum ProfileStoreError: LocalizedError {
     case profileNotFound
 
@@ -59,6 +73,10 @@ final class ProfileStore {
     }
 
     func loadProfiles() -> [CodexProfile] {
+        loadProfilesResult().profiles
+    }
+
+    func loadProfilesResult() -> ProfilesLoadResult {
         ensureDirectoriesExist()
 
         let urls = (try? fileManager.contentsOfDirectory(
@@ -67,26 +85,49 @@ final class ProfileStore {
             options: [.skipsHiddenFiles]
         )) ?? []
 
-        return urls
+        var issues: [LoadIssue] = []
+
+        let profiles = urls
             .filter { $0.pathExtension == "json" && !$0.lastPathComponent.hasSuffix(".auth.json") }
-            .compactMap { url in
-                guard let data = try? Data(contentsOf: url) else { return nil }
-                return try? decoder.decode(CodexProfile.self, from: data)
+            .compactMap { url -> CodexProfile? in
+                do {
+                    let data = try Data(contentsOf: url)
+                    return try decoder.decode(CodexProfile.self, from: data)
+                } catch {
+                    issues.append(
+                        LoadIssue(message: "档案文件损坏：\(url.lastPathComponent)")
+                    )
+                    return nil
+                }
             }
             .sorted { lhs, rhs in
                 lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
             }
+
+        return ProfilesLoadResult(profiles: profiles, issues: issues)
     }
 
     func loadSettings() -> AppSettings {
+        loadSettingsResult().settings
+    }
+
+    func loadSettingsResult() -> SettingsLoadResult {
         ensureDirectoriesExist()
 
-        guard let data = try? Data(contentsOf: settingsURL),
-              let settings = try? decoder.decode(AppSettings.self, from: data) else {
-            return AppSettings(lastActiveProfileID: nil)
+        guard fileManager.fileExists(atPath: settingsURL.path) else {
+            return SettingsLoadResult(settings: AppSettings(lastActiveProfileID: nil), issues: [])
         }
 
-        return settings
+        do {
+            let data = try Data(contentsOf: settingsURL)
+            let settings = try decoder.decode(AppSettings.self, from: data)
+            return SettingsLoadResult(settings: settings, issues: [])
+        } catch {
+            return SettingsLoadResult(
+                settings: AppSettings(lastActiveProfileID: nil),
+                issues: [LoadIssue(message: "设置文件损坏：\(settingsURL.lastPathComponent)")]
+            )
+        }
     }
 
     func saveSettings(_ settings: AppSettings) throws {

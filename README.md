@@ -64,6 +64,7 @@ open ./dist/CodexQuickSwitch.dmg
 - 真正的账号凭据存放在 macOS Keychain，service 为 `CodexQuickSwitch`
 - 启动时会自动把旧版 `profiles/*.auth.json` 迁移到 Keychain
 - 迁移成功后，旧明文凭据文件会被立即删除
+- 如果档案 JSON 或 `settings.json` 损坏，菜单栏会明确提示对应文件，不再静默忽略
 - `更新当前档案` 会把当前会话的最新凭据和额度快照回写到当前档案
 - 切换动作会重启 `/Applications/Codex.app`
 - 若切换后账号校验失败，会自动回滚到原账号并重新拉起 `Codex.app`

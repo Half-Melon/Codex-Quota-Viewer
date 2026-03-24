@@ -54,6 +54,44 @@ func migrationMovesLegacySidecarIntoCredentialStoreAndDeletesPlaintextFile() thr
 }
 
 @Test
+func loadProfilesResultReportsCorruptedProfileFile() throws {
+    let harness = try TestHarness()
+    let profile = try harness.store.createProfile(
+        name: "Healthy",
+        authData: Data("healthy-auth".utf8),
+        snapshot: sampleSnapshot(email: "healthy@example.com").cached
+    )
+
+    let brokenURL = harness.store.profilesDirectoryURL
+        .appendingPathComponent("\(UUID().uuidString).json", isDirectory: false)
+    try Data("not-json".utf8).write(to: brokenURL, options: .atomic)
+
+    let result = harness.store.loadProfilesResult()
+
+    #expect(result.profiles.count == 1)
+    #expect(result.profiles.first?.id == profile.id)
+    #expect(result.issues.count == 1)
+    #expect(result.issues[0].message.contains(brokenURL.lastPathComponent))
+}
+
+@Test
+func loadSettingsResultReportsCorruptedSettingsFile() throws {
+    let harness = try TestHarness()
+    try FileManager.default.createDirectory(
+        at: harness.store.settingsURL.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+    )
+    try Data("not-json".utf8).write(to: harness.store.settingsURL, options: .atomic)
+
+    let result = harness.store.loadSettingsResult()
+
+    #expect(result.settings.refreshIntervalPreset == .fiveMinutes)
+    #expect(result.settings.launchAtLoginEnabled == false)
+    #expect(result.issues.count == 1)
+    #expect(result.issues[0].message.contains("settings.json"))
+}
+
+@Test
 func resolveActiveProfilePrefersStoredIDOverEmailFallback() {
     let snapshotA = sampleSnapshot(email: "a@example.com").cached
     let snapshotB = sampleSnapshot(email: "b@example.com").cached
