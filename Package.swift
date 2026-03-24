@@ -12,9 +12,6 @@ let package = Package(
             targets: ["CodexAccountSwitcher"]
         ),
     ],
-    dependencies: [
-        .package(url: "https://github.com/apple/swift-testing.git", exact: "6.2.4"),
-    ],
     targets: [
         .executableTarget(
             name: "CodexAccountSwitcher",
@@ -26,7 +23,6 @@ let package = Package(
             name: "CodexAccountSwitcherTests",
             dependencies: [
                 "CodexAccountSwitcher",
-                .product(name: "Testing", package: "swift-testing"),
             ]
         ),
     ]
