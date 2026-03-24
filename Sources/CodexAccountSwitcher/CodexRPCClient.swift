@@ -40,7 +40,7 @@ struct CodexRPCClient: Sendable, CodexRPCClientProtocol {
     func fetchSnapshot(authData: Data) async throws -> CodexSnapshot {
         let fileManager = FileManager.default
         let tempHome = fileManager.temporaryDirectory
-            .appendingPathComponent("CodexQuickSwitch-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("CodexAccountSwitcher-\(UUID().uuidString)", isDirectory: true)
 
         try fileManager.createDirectory(
             at: tempHome.appendingPathComponent(".codex", isDirectory: true),
@@ -128,7 +128,7 @@ struct CodexRPCClient: Sendable, CodexRPCClientProtocol {
             method: "initialize",
             params: [
                 "clientInfo": [
-                    "name": "CodexQuickSwitch",
+                    "name": "CodexAccountSwitcher",
                     "version": "0.1.0",
                 ],
                 "protocolVersion": 2,

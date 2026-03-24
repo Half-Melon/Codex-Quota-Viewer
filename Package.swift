@@ -2,14 +2,14 @@
 import PackageDescription
 
 let package = Package(
-    name: "CodexQuickSwitch",
+    name: "CodexAccountSwitcher",
     platforms: [
         .macOS(.v13),
     ],
     products: [
         .executable(
-            name: "CodexQuickSwitch",
-            targets: ["CodexQuickSwitch"]
+            name: "CodexAccountSwitcher",
+            targets: ["CodexAccountSwitcher"]
         ),
     ],
     dependencies: [
@@ -17,15 +17,15 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "CodexQuickSwitch",
+            name: "CodexAccountSwitcher",
             resources: [
                 .process("Resources"),
             ]
         ),
         .testTarget(
-            name: "CodexQuickSwitchTests",
+            name: "CodexAccountSwitcherTests",
             dependencies: [
-                "CodexQuickSwitch",
+                "CodexAccountSwitcher",
                 .product(name: "Testing", package: "swift-testing"),
             ]
         ),

@@ -35,12 +35,15 @@ enum ProfileStoreError: LocalizedError {
 }
 
 final class ProfileStore {
-    static let credentialService = "CodexQuickSwitch"
+    static let credentialService = "CodexAccountSwitcher"
+    static let legacyCredentialService = "CodexQuickSwitch"
 
     private let fileManager = FileManager.default
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
     private let credentialStore: any CredentialStore
+    private let legacyCredentialStore: (any CredentialStore)?
+    private let legacyBaseURL: URL?
 
     let baseURL: URL
     let profilesDirectoryURL: URL
@@ -50,7 +53,9 @@ final class ProfileStore {
     init(
         baseURL: URL? = nil,
         currentAuthURL: URL? = nil,
-        credentialStore: (any CredentialStore)? = nil
+        credentialStore: (any CredentialStore)? = nil,
+        legacyBaseURL: URL? = nil,
+        legacyCredentialStore: (any CredentialStore)? = nil
     ) {
         encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -64,7 +69,18 @@ final class ProfileStore {
         self.baseURL = baseURL ?? home
             .appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent("Application Support", isDirectory: true)
-            .appendingPathComponent("CodexQuickSwitch", isDirectory: true)
+            .appendingPathComponent("CodexAccountSwitcher", isDirectory: true)
+        self.legacyBaseURL = legacyBaseURL ?? {
+            guard baseURL == nil else { return nil }
+            return home
+                .appendingPathComponent("Library", isDirectory: true)
+                .appendingPathComponent("Application Support", isDirectory: true)
+                .appendingPathComponent("CodexQuickSwitch", isDirectory: true)
+        }()
+        self.legacyCredentialStore = legacyCredentialStore ?? {
+            guard credentialStore == nil else { return nil }
+            return KeychainCredentialStore(service: Self.legacyCredentialService)
+        }()
         profilesDirectoryURL = self.baseURL.appendingPathComponent("profiles", isDirectory: true)
         settingsURL = self.baseURL.appendingPathComponent("settings.json", isDirectory: false)
         self.currentAuthURL = currentAuthURL ?? home
@@ -232,11 +248,13 @@ final class ProfileStore {
         ensureDirectoriesExist()
 
         let legacyFiles = legacyAuthSidecarURLs()
-        guard settings.storageVersion < AppSettings.currentStorageVersion || !legacyFiles.isEmpty else {
+        let shouldCheckLegacyService = settings.storageVersion < AppSettings.currentStorageVersion
+        guard settings.storageVersion < AppSettings.currentStorageVersion || !legacyFiles.isEmpty || shouldCheckLegacyService else {
             return MigrationResult()
         }
 
         var result = MigrationResult()
+        migrateLegacyKeychainEntriesIfNeeded(result: &result)
 
         for legacyURL in legacyFiles {
             let fileName = legacyURL.lastPathComponent
@@ -276,6 +294,7 @@ final class ProfileStore {
     }
 
     private func ensureDirectoriesExist() {
+        migrateLegacyStorageLocationIfNeeded()
         try? fileManager.createDirectory(
             at: profilesDirectoryURL,
             withIntermediateDirectories: true,
@@ -307,6 +326,61 @@ final class ProfileStore {
             try credentialStore.upsert(data: data, account: account)
         } else {
             try credentialStore.delete(account: account)
+        }
+    }
+
+    private func migrateLegacyStorageLocationIfNeeded() {
+        guard let legacyBaseURL,
+              legacyBaseURL.path != baseURL.path,
+              fileManager.fileExists(atPath: legacyBaseURL.path) else {
+            return
+        }
+
+        let parentURL = baseURL.deletingLastPathComponent()
+        try? fileManager.createDirectory(at: parentURL, withIntermediateDirectories: true)
+
+        if !fileManager.fileExists(atPath: baseURL.path) {
+            try? fileManager.moveItem(at: legacyBaseURL, to: baseURL)
+            return
+        }
+
+        let legacyItems = (try? fileManager.contentsOfDirectory(
+            at: legacyBaseURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )) ?? []
+
+        for legacyItem in legacyItems {
+            let targetURL = baseURL.appendingPathComponent(legacyItem.lastPathComponent, isDirectory: false)
+            guard !fileManager.fileExists(atPath: targetURL.path) else { continue }
+            try? fileManager.moveItem(at: legacyItem, to: targetURL)
+        }
+
+        try? fileManager.removeItem(at: legacyBaseURL)
+    }
+
+    private func migrateLegacyKeychainEntriesIfNeeded(result: inout MigrationResult) {
+        guard let legacyCredentialStore else { return }
+
+        for profile in loadProfiles() {
+            let account = credentialAccount(for: profile.id)
+
+            do {
+                if try credentialStore.contains(account: account) {
+                    continue
+                }
+
+                guard try legacyCredentialStore.contains(account: account) else {
+                    continue
+                }
+
+                let data = try legacyCredentialStore.read(account: account)
+                try credentialStore.upsert(data: data, account: account)
+                try legacyCredentialStore.delete(account: account)
+                result.migratedCount += 1
+            } catch {
+                result.errors.append("迁移旧 Keychain 凭据失败：\(profile.name)")
+            }
         }
     }
 

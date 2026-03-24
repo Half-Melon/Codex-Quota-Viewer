@@ -2,14 +2,14 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-APP_DIR="$ROOT_DIR/dist/CodexQuickSwitch.app"
+APP_DIR="$ROOT_DIR/dist/CodexAccountSwitcher.app"
 ICONSET_DIR="$ROOT_DIR/.build/AppIcon.iconset"
 ICON_ICNS="$ROOT_DIR/.build/AppIcon.icns"
 
 cd "$ROOT_DIR"
 
 swift package clean
-swift build -c release --product CodexQuickSwitch
+swift build -c release --product CodexAccountSwitcher
 BIN_DIR="$(swift build -c release --show-bin-path)"
 swift scripts/generate-app-icon.swift "$ROOT_DIR"
 rm -f "$ICON_ICNS"
@@ -19,7 +19,7 @@ rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
 
-cp "$BIN_DIR/CodexQuickSwitch" "$APP_DIR/Contents/MacOS/CodexQuickSwitch"
+cp "$BIN_DIR/CodexAccountSwitcher" "$APP_DIR/Contents/MacOS/CodexAccountSwitcher"
 cp "$ICON_ICNS" "$APP_DIR/Contents/Resources/AppIcon.icns"
 find "$BIN_DIR" -maxdepth 1 -name '*.bundle' -exec cp -R {} "$APP_DIR/Contents/Resources/" \;
 
@@ -29,17 +29,17 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 <plist version="1.0">
 <dict>
     <key>CFBundleDisplayName</key>
-    <string>CodexQuickSwitch</string>
+    <string>Codex Account Switcher</string>
     <key>CFBundleExecutable</key>
-    <string>CodexQuickSwitch</string>
+    <string>CodexAccountSwitcher</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
-    <string>com.aikris.CodexQuickSwitch</string>
+    <string>com.aikris.CodexAccountSwitcher</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>CodexQuickSwitch</string>
+    <string>Codex Account Switcher</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

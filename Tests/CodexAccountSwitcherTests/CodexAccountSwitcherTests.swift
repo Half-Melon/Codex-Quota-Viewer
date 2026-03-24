@@ -2,7 +2,7 @@ import Foundation
 import Security
 import Testing
 
-@testable import CodexQuickSwitch
+@testable import CodexAccountSwitcher
 
 @Test
 func createProfilePersistsMetadataAndCredentialWithoutLegacySidecar() throws {
@@ -72,6 +72,65 @@ func migrationMovesLegacySidecarIntoCredentialStoreAndDeletesPlaintextFile() thr
     #expect(settings.storageVersion == AppSettings.currentStorageVersion)
     #expect(!FileManager.default.fileExists(atPath: legacyURL.path))
     #expect(try harness.credentialStore.read(account: profile.id.uuidString) == legacyData)
+}
+
+@Test
+func loadProfilesMigratesLegacyStorageDirectory() throws {
+    let harness = try TestHarness()
+    let legacyBaseURL = harness.rootURL.appendingPathComponent("LegacyApplicationSupport", isDirectory: true)
+    let legacyProfilesURL = legacyBaseURL.appendingPathComponent("profiles", isDirectory: true)
+    try FileManager.default.createDirectory(at: legacyProfilesURL, withIntermediateDirectories: true)
+
+    let profile = makeProfile(
+        name: "LegacyStorage",
+        snapshot: sampleSnapshot(email: "legacy-storage@example.com").cached
+    )
+    let profileData = try JSONEncoder.profileEncoder().encode(profile)
+    try profileData.write(
+        to: legacyProfilesURL.appendingPathComponent("\(profile.id.uuidString).json"),
+        options: .atomic
+    )
+
+    let store = ProfileStore(
+        baseURL: harness.rootURL.appendingPathComponent("ApplicationSupport", isDirectory: true),
+        currentAuthURL: harness.store.currentAuthURL,
+        credentialStore: harness.credentialStore,
+        legacyBaseURL: legacyBaseURL
+    )
+
+    let profiles = store.loadProfiles()
+
+    #expect(profiles.count == 1)
+    #expect(profiles.first?.id == profile.id)
+    #expect(!FileManager.default.fileExists(atPath: legacyBaseURL.path))
+}
+
+@Test
+func migrationMovesCredentialsFromLegacyKeychainService() throws {
+    let harness = try TestHarness()
+    let legacyCredentialStore = InMemoryCredentialStore()
+    let authData = Data("legacy-service-auth".utf8)
+    let profile = makeProfile(
+        name: "LegacyService",
+        snapshot: sampleSnapshot(email: "legacy-service@example.com").cached
+    )
+    try harness.store.save(profile)
+    try legacyCredentialStore.upsert(data: authData, account: profile.id.uuidString)
+
+    let store = ProfileStore(
+        baseURL: harness.store.baseURL,
+        currentAuthURL: harness.store.currentAuthURL,
+        credentialStore: harness.credentialStore,
+        legacyBaseURL: nil,
+        legacyCredentialStore: legacyCredentialStore
+    )
+
+    var settings = AppSettings(lastActiveProfileID: nil)
+    let result = store.migrateLegacyCredentialsIfNeeded(settings: &settings)
+
+    #expect(result.migratedCount == 1)
+    #expect(try harness.credentialStore.read(account: profile.id.uuidString) == authData)
+    #expect(try !legacyCredentialStore.contains(account: profile.id.uuidString))
 }
 
 @Test
@@ -297,7 +356,7 @@ private final class TestHarness {
 
     init(credentialStore: (any CredentialStore)? = nil) throws {
         rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("CodexQuickSwitchTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("CodexAccountSwitcherTests-\(UUID().uuidString)", isDirectory: true)
         self.credentialStore = credentialStore ?? InMemoryCredentialStore()
 
         let baseURL = rootURL.appendingPathComponent("ApplicationSupport", isDirectory: true)
@@ -314,6 +373,15 @@ private final class TestHarness {
 
     deinit {
         try? FileManager.default.removeItem(at: rootURL)
+    }
+}
+
+private extension JSONEncoder {
+    static func profileEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
     }
 }
 

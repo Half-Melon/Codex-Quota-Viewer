@@ -69,7 +69,7 @@ final class AppController: NSObject, NSMenuDelegate {
         if !migrationResult.errors.isEmpty {
             statusNotice = migrationResult.errors.joined(separator: "；")
         } else if migrationResult.migratedCount > 0 {
-            statusNotice = "已迁移 \(migrationResult.migratedCount) 个档案到 Keychain"
+            statusNotice = "已迁移 \(migrationResult.migratedCount) 项旧数据"
         }
     }
 

@@ -1,4 +1,4 @@
-# Codex Quick Switch
+# Codex Account Switcher
 
 一个极简的 macOS 菜单栏工具，只做两件事：
 
@@ -40,27 +40,27 @@
 
 ```bash
 ./scripts/build-app.sh
-open ./dist/CodexQuickSwitch.app
+open ./dist/CodexAccountSwitcher.app
 ```
 
 ## 构建
 
 ```bash
 ./scripts/build-app.sh
-open ./dist/CodexQuickSwitch.app
+open ./dist/CodexAccountSwitcher.app
 ```
 
 如需生成可拖拽安装的磁盘镜像：
 
 ```bash
 ./scripts/build-dmg.sh
-open ./dist/CodexQuickSwitch.dmg
+open ./dist/CodexAccountSwitcher.dmg
 ```
 
 ## 使用流程
 
 1. 先在官方 `Codex.app` 里登录一个账号
-2. 打开菜单栏里的 `CodexQuickSwitch`
+2. 打开菜单栏里的 `Codex Account Switcher`
 3. 点 `从当前会话创建档案…`
 4. 对其他账号重复一次
 5. 之后直接点档案条目即可切换
@@ -80,9 +80,10 @@ open ./dist/CodexQuickSwitch.dmg
 
 ## 说明
 
-- 档案保存在 `~/Library/Application Support/CodexQuickSwitch/profiles/`
+- 档案保存在 `~/Library/Application Support/CodexAccountSwitcher/profiles/`
 - 档案 JSON 只保存名称、缓存的账号信息和额度快照
-- 真正的账号凭据存放在 macOS Keychain，service 为 `CodexQuickSwitch`
+- 真正的账号凭据存放在 macOS Keychain，service 为 `CodexAccountSwitcher`
+- 首次启动会自动迁移旧版 `CodexQuickSwitch` 的本地档案目录、Keychain 凭据和开机启动配置
 - 启动时会自动把旧版 `profiles/*.auth.json` 迁移到 Keychain
 - 迁移成功后，旧明文凭据文件会被立即删除
 - 新建或更新档案时，metadata 和 Keychain 凭据会一起成功或一起失败，不会留下半成品档案

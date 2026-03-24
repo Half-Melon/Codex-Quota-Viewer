@@ -8,10 +8,10 @@ let rootPath = CommandLine.arguments.count > 1
     : FileManager.default.currentDirectoryPath
 let rootURL = URL(fileURLWithPath: rootPath, isDirectory: true)
 let iconsetURL = rootURL.appendingPathComponent(".build/AppIcon.iconset", isDirectory: true)
-let previewURL = rootURL.appendingPathComponent("dist/CodexQuickSwitch-icon-preview.png", isDirectory: false)
+let previewURL = rootURL.appendingPathComponent("dist/CodexAccountSwitcher-icon-preview.png", isDirectory: false)
 let blossomURL = rootURL
     .appendingPathComponent("Sources", isDirectory: true)
-    .appendingPathComponent("CodexQuickSwitch", isDirectory: true)
+    .appendingPathComponent("CodexAccountSwitcher", isDirectory: true)
     .appendingPathComponent("Resources", isDirectory: true)
     .appendingPathComponent("openai-blossom-dark.svg", isDirectory: false)
 
@@ -269,7 +269,7 @@ private extension NSImage {
               let representation = NSBitmapImageRep(data: tiffRepresentation),
               let png = representation.representation(using: .png, properties: [:]) else {
             throw NSError(
-                domain: "CodexQuickSwitch.Icon",
+                domain: "CodexAccountSwitcher.Icon",
                 code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "Failed to encode PNG"]
             )

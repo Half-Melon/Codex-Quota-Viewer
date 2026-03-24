@@ -1,4 +1,4 @@
-# Codex Quick Switch 0.1.0
+# Codex Account Switcher 0.1.0
 
 一个极简的 macOS 菜单栏工具，用来查看多个 Codex 账号额度，并一键切换当前 `Codex.app` 使用的账号。
 
@@ -8,6 +8,7 @@
 - 支持查看每个账号的 `5h` / `1w` 剩余额度
 - 支持一键切换当前 `Codex.app` 所用账号
 - 账号凭据改存 macOS Keychain，不再长期明文放在档案目录
+- 会自动迁移旧版 `CodexQuickSwitch` 的本地数据和凭据
 - 切换失败自动回滚，避免把当前会话切坏
 - 档案或设置文件损坏时会明确提示，不再静默吞掉
 

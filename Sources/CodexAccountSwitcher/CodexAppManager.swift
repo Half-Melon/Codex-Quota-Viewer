@@ -28,7 +28,7 @@ struct CodexAppManager: Sendable, CodexAppManaging {
         _ = activate
         guard NSWorkspace.shared.open(appURL) else {
             throw NSError(
-                domain: "CodexQuickSwitch",
+                domain: "CodexAccountSwitcher",
                 code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "无法打开 /Applications/Codex.app"]
             )
