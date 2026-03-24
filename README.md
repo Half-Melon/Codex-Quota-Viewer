@@ -64,9 +64,11 @@ open ./dist/CodexQuickSwitch.dmg
 - 真正的账号凭据存放在 macOS Keychain，service 为 `CodexQuickSwitch`
 - 启动时会自动把旧版 `profiles/*.auth.json` 迁移到 Keychain
 - 迁移成功后，旧明文凭据文件会被立即删除
+- 新建或更新档案时，metadata 和 Keychain 凭据会一起成功或一起失败，不会留下半成品档案
 - 如果档案 JSON 或 `settings.json` 损坏，菜单栏会明确提示对应文件，不再静默忽略
 - `更新当前档案` 会把当前会话的最新凭据和额度快照回写到当前档案
 - 切换动作会重启 `/Applications/Codex.app`
+- 切换前会确认旧 `Codex.app` 已完全退出；如果未能退出，会立即回滚，不会误报切换成功
 - 若切换后账号校验失败，会自动回滚到原账号并重新拉起 `Codex.app`
 - 双条 meter 图标在数据过旧时会变灰，异常时会进一步减弱显示
 - 文本图标直接加载官方 Blossom SVG，并按系统外观切换黑/白版本

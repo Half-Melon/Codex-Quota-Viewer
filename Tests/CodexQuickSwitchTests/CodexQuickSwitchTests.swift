@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import Testing
 
 @testable import CodexQuickSwitch
@@ -27,6 +28,26 @@ func createProfilePersistsMetadataAndCredentialWithoutLegacySidecar() throws {
     )
     #expect(!files.contains { $0.lastPathComponent.hasSuffix(".auth.json") })
     #expect(try harness.credentialStore.read(account: profile.id.uuidString) == authData)
+}
+
+@Test
+func createProfileDoesNotLeaveMetadataWhenCredentialWriteFails() throws {
+    let harness = try TestHarness(credentialStore: FailingCredentialStore())
+
+    do {
+        _ = try harness.store.createProfile(
+            name: "Broken",
+            authData: Data("auth".utf8),
+            snapshot: sampleSnapshot(email: "broken@example.com").cached
+        )
+        Issue.record("Expected credential store error")
+    } catch {
+        let files = try FileManager.default.contentsOfDirectory(
+            at: harness.store.profilesDirectoryURL,
+            includingPropertiesForKeys: nil
+        )
+        #expect(files.isEmpty)
+    }
 }
 
 @Test
@@ -205,15 +226,79 @@ func switchFailureRollsBackAuthAndRelaunchesCodex() async throws {
     #expect(appManager.launchCallCount == 1)
 }
 
+@MainActor
+@Test
+func switchFailureRollsBackWhenCodexCannotTerminate() async throws {
+    let harness = try TestHarness()
+    let snapshotA = sampleSnapshot(email: "a@example.com")
+    let snapshotB = sampleSnapshot(email: "b@example.com")
+    let authA = Data("auth-a".utf8)
+    let authB = Data("auth-b".utf8)
+
+    let profileA = try harness.store.createProfile(
+        name: "A",
+        authData: authA,
+        snapshot: snapshotA.cached
+    )
+    let profileB = try harness.store.createProfile(
+        name: "B",
+        authData: authB,
+        snapshot: snapshotB.cached
+    )
+    try harness.store.overwriteCurrentAuthData(authA)
+
+    let rpcClient = FakeRPCClient(
+        fetchSnapshotHandler: { data in
+            if data == authB { return snapshotB }
+            if data == authA { return snapshotA }
+            throw NSError(domain: "test", code: 1)
+        },
+        fetchCurrentSnapshotHandler: {
+            Issue.record("Should not verify current snapshot after terminate failure")
+            return snapshotB
+        }
+    )
+    let appManager = FakeAppManager(
+        terminateError: CodexAppManagerError.failedToTerminate
+    )
+    let switchService = ProfileSwitchService(
+        store: harness.store,
+        rpcClient: rpcClient,
+        appManager: appManager
+    )
+
+    do {
+        _ = try await switchService.switchToProfile(
+            targetProfile: profileB,
+            activeProfileID: profileA.id,
+            currentSnapshot: snapshotA,
+            autoOpenCodexAfterSwitch: true
+        )
+        Issue.record("Expected rollback error")
+    } catch let error as ProfileSwitchError {
+        switch error {
+        case .rolledBack(let reason):
+            #expect(reason.contains("未能完全退出"))
+        default:
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    #expect(try harness.store.currentAuthData() == authA)
+    #expect(try harness.store.readAuthData(for: profileA.id) == authA)
+    #expect(appManager.terminateCallCount == 1)
+    #expect(appManager.launchCallCount == 1)
+}
+
 private final class TestHarness {
     let rootURL: URL
-    let credentialStore: InMemoryCredentialStore
+    let credentialStore: any CredentialStore
     let store: ProfileStore
 
-    init() throws {
+    init(credentialStore: (any CredentialStore)? = nil) throws {
         rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("CodexQuickSwitchTests-\(UUID().uuidString)", isDirectory: true)
-        credentialStore = InMemoryCredentialStore()
+        self.credentialStore = credentialStore ?? InMemoryCredentialStore()
 
         let baseURL = rootURL.appendingPathComponent("ApplicationSupport", isDirectory: true)
         let currentAuthURL = rootURL
@@ -223,13 +308,20 @@ private final class TestHarness {
         store = ProfileStore(
             baseURL: baseURL,
             currentAuthURL: currentAuthURL,
-            credentialStore: credentialStore
+            credentialStore: self.credentialStore
         )
     }
 
     deinit {
         try? FileManager.default.removeItem(at: rootURL)
     }
+}
+
+private struct FailingCredentialStore: CredentialStore {
+    func contains(account: String) throws -> Bool { false }
+    func read(account: String) throws -> Data { throw CredentialStoreError.itemNotFound }
+    func upsert(data: Data, account: String) throws { throw CredentialStoreError.keychainError(errSecAuthFailed) }
+    func delete(account: String) throws {}
 }
 
 private final class InMemoryCredentialStore: CredentialStore {
@@ -279,13 +371,26 @@ private final class FakeRPCClient: @unchecked Sendable, CodexRPCClientProtocol {
 private final class FakeAppManager: @unchecked Sendable, CodexAppManaging {
     private(set) var terminateCallCount = 0
     private(set) var launchCallCount = 0
+    private let isRunningValue: Bool
+    private let terminateError: Error?
+
+    init(
+        isRunningValue: Bool = true,
+        terminateError: Error? = nil
+    ) {
+        self.isRunningValue = isRunningValue
+        self.terminateError = terminateError
+    }
 
     func isCodexRunning() -> Bool {
-        true
+        isRunningValue
     }
 
     func terminateCodex() async throws {
         terminateCallCount += 1
+        if let terminateError {
+            throw terminateError
+        }
     }
 
     func launchCodex(activate: Bool) throws {

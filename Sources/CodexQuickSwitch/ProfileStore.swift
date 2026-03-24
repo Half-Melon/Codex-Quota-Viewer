@@ -160,13 +160,21 @@ final class ProfileStore {
         ensureDirectoriesExist()
 
         let data = try encoder.encode(profile)
-        try data.write(to: profileURL(for: profile.id), options: .atomic)
+        let profileURL = profileURL(for: profile.id)
+        let account = credentialAccount(for: profile.id)
 
         if let authData {
-            try credentialStore.upsert(
-                data: authData,
-                account: credentialAccount(for: profile.id)
-            )
+            let previousCredential = try readCredentialIfExists(account: account)
+
+            do {
+                try credentialStore.upsert(data: authData, account: account)
+                try data.write(to: profileURL, options: .atomic)
+            } catch {
+                try? restoreCredential(previousCredential, account: account)
+                throw error
+            }
+        } else {
+            try data.write(to: profileURL, options: .atomic)
         }
     }
 
@@ -285,6 +293,21 @@ final class ProfileStore {
 
     private func credentialAccount(for id: UUID) -> String {
         id.uuidString
+    }
+
+    private func readCredentialIfExists(account: String) throws -> Data? {
+        if try credentialStore.contains(account: account) {
+            return try credentialStore.read(account: account)
+        }
+        return nil
+    }
+
+    private func restoreCredential(_ data: Data?, account: String) throws {
+        if let data {
+            try credentialStore.upsert(data: data, account: account)
+        } else {
+            try credentialStore.delete(account: account)
+        }
     }
 
     private func legacyAuthSidecarURLs() -> [URL] {
