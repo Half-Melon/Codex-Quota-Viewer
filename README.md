@@ -1,15 +1,23 @@
-# CodexQuickSwitch
+# Codex Quick Switch
 
-一个极简的 macOS 菜单栏小工具，做两件事：
+一个极简的 macOS 菜单栏工具，只做两件事：
 
-1. 看多个 Codex 账号的 5 小时 / 1 周额度
+1. 看多个 Codex 账号的 `5h` / `1w` 剩余额度
 2. 一键切换当前 `Codex.app` 使用的账号
 
-实现路径很简单：
+适合本机长期自用，不做额外平台层、不做复杂同步、不引入大依赖。
+
+## 核心思路
 
 - 额度读取：直接调用本机 `codex app-server`
-- 账号切换：档案 metadata 放本地，账号凭据放 Keychain
+- 账号切换：档案 metadata 存本地，账号凭据存 Keychain
 - 切换流程：覆盖当前 `~/.codex/auth.json`，重启 `Codex.app`，再做账号校验
+
+## 适用场景
+
+- 你有多个 Codex 账号，需要频繁切换
+- 你想在菜单栏快速看额度，而不是每次都进官方客户端
+- 你只需要稳定、直接、可本地打包的原生 macOS 小工具
 
 ## 当前功能
 
@@ -28,6 +36,13 @@
   - 切换后是否自动打开 Codex 主窗口
 - 打包时会自动生成原生 macOS App 图标，并写入标准 `.app` 包
 
+## 快速开始
+
+```bash
+./scripts/build-app.sh
+open ./dist/CodexQuickSwitch.app
+```
+
 ## 构建
 
 ```bash
@@ -42,7 +57,7 @@ open ./dist/CodexQuickSwitch.app
 open ./dist/CodexQuickSwitch.dmg
 ```
 
-## 使用
+## 使用流程
 
 1. 先在官方 `Codex.app` 里登录一个账号
 2. 打开菜单栏里的 `CodexQuickSwitch`
@@ -50,6 +65,12 @@ open ./dist/CodexQuickSwitch.dmg
 4. 对其他账号重复一次
 5. 之后直接点档案条目即可切换
 6. 如需调整刷新频率、图标样式或开机启动，打开菜单里的 `设置…`
+
+## 运行要求
+
+- macOS 13+
+- 已安装官方 `Codex.app`
+- 本机可用 `codex app-server`
 
 ## 当前范围
 
