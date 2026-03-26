@@ -27,7 +27,8 @@ func createProfilePersistsMetadataAndCredentialWithoutLegacySidecar() throws {
         includingPropertiesForKeys: nil
     )
     #expect(!files.contains { $0.lastPathComponent.hasSuffix(".auth.json") })
-    #expect(try harness.credentialStore.read(account: profile.id.uuidString) == authData)
+    #expect(try harness.store.readAuthData(for: profile.id) == authData)
+    #expect(try !harness.credentialStore.contains(account: profile.id.uuidString))
 }
 
 @Test
@@ -71,7 +72,8 @@ func migrationMovesLegacySidecarIntoCredentialStoreAndDeletesPlaintextFile() thr
     #expect(result.errors.isEmpty)
     #expect(settings.storageVersion == AppSettings.currentStorageVersion)
     #expect(!FileManager.default.fileExists(atPath: legacyURL.path))
-    #expect(try harness.credentialStore.read(account: profile.id.uuidString) == legacyData)
+    #expect(try harness.store.readAuthData(for: profile.id) == legacyData)
+    #expect(try !harness.credentialStore.contains(account: profile.id.uuidString))
 }
 
 @Test
@@ -129,8 +131,29 @@ func migrationMovesCredentialsFromLegacyKeychainService() throws {
     let result = store.migrateLegacyCredentialsIfNeeded(settings: &settings)
 
     #expect(result.migratedCount == 1)
-    #expect(try harness.credentialStore.read(account: profile.id.uuidString) == authData)
+    #expect(try store.readAuthData(for: profile.id) == authData)
     #expect(try !legacyCredentialStore.contains(account: profile.id.uuidString))
+}
+
+@Test
+func migrationMovesPerProfileKeychainEntriesIntoBundledCredentialItem() throws {
+    let harness = try TestHarness()
+    let authData = Data("bundle-migration-auth".utf8)
+    let profile = makeProfile(
+        name: "Bundled",
+        snapshot: sampleSnapshot(email: "bundle@example.com").cached
+    )
+    try harness.store.save(profile)
+    try harness.credentialStore.upsert(data: authData, account: profile.id.uuidString)
+
+    var settings = AppSettings(lastActiveProfileID: nil, storageVersion: 2)
+    let result = harness.store.migrateLegacyCredentialsIfNeeded(settings: &settings)
+
+    #expect(result.migratedCount == 1)
+    #expect(result.errors.isEmpty)
+    #expect(settings.storageVersion == AppSettings.currentStorageVersion)
+    #expect(try harness.store.readAuthData(for: profile.id) == authData)
+    #expect(try !harness.credentialStore.contains(account: profile.id.uuidString))
 }
 
 @Test
@@ -221,7 +244,12 @@ func deleteProfileRemovesMetadataAndCredential() throws {
     let metadataURL = harness.store.profilesDirectoryURL
         .appendingPathComponent("\(profile.id.uuidString).json", isDirectory: false)
     #expect(!FileManager.default.fileExists(atPath: metadataURL.path))
-    #expect(try !harness.credentialStore.contains(account: profile.id.uuidString))
+    do {
+        _ = try harness.store.readAuthData(for: profile.id)
+        Issue.record("Expected deleted credential to be missing")
+    } catch let error as CredentialStoreError {
+        #expect(error == .itemNotFound)
+    }
 }
 
 @MainActor

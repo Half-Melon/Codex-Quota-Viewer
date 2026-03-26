@@ -93,7 +93,7 @@ struct AppSettings: Codable {
     var statusItemStyle: StatusItemStyle
     var autoOpenCodexAfterSwitch: Bool
 
-    static let currentStorageVersion = 2
+    static let currentStorageVersion = 3
 
     init(
         lastActiveProfileID: UUID?,
@@ -252,7 +252,7 @@ func resolveActiveProfileID(
 func classifyProfileHealth(from error: Error) -> ProfileHealthStatus {
     if let credentialError = error as? CredentialStoreError {
         switch credentialError {
-        case .itemNotFound, .keychainError:
+        case .itemNotFound, .invalidStoredData, .keychainError:
             return .readFailure
         }
     }

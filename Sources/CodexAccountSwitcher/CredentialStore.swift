@@ -8,14 +8,17 @@ protocol CredentialStore {
     func delete(account: String) throws
 }
 
-enum CredentialStoreError: LocalizedError {
+enum CredentialStoreError: LocalizedError, Equatable {
     case itemNotFound
+    case invalidStoredData
     case keychainError(OSStatus)
 
     var errorDescription: String? {
         switch self {
         case .itemNotFound:
-            return "找不到档案凭据。"
+            return "找不到账号凭据。"
+        case .invalidStoredData:
+            return "Keychain 凭据数据已损坏。"
         case .keychainError(let status):
             if let message = SecCopyErrorMessageString(status, nil) as String? {
                 return "Keychain 错误：\(message)"

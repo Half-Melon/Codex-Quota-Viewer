@@ -1,6 +1,11 @@
 import AppKit
 import Foundation
 
+private enum UsageDateStyle {
+    case time
+    case monthDay
+}
+
 @MainActor
 final class AppController: NSObject, NSMenuDelegate {
     private let store: ProfileStore
@@ -13,6 +18,7 @@ final class AppController: NSObject, NSMenuDelegate {
         rpcClient: rpcClient,
         appManager: appManager
     )
+    private lazy var browserLoginService = BrowserLoginService(baseURL: store.baseURL)
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
@@ -25,6 +31,7 @@ final class AppController: NSObject, NSMenuDelegate {
     private var profileHealthStatuses: [UUID: ProfileHealthStatus] = [:]
     private var isRefreshing = false
     private var isSwitching = false
+    private var isAddingAccount = false
     private var statusNotice: String?
     private var loadWarningNotice: String?
     private var lastRefreshAt: Date?
@@ -116,7 +123,7 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private func refreshAllProfiles() {
-        guard !isRefreshing, !isSwitching else { return }
+        guard !isRefreshing, !isSwitching, !isAddingAccount else { return }
 
         isRefreshing = true
         currentError = nil
@@ -152,14 +159,26 @@ final class AppController: NSObject, NSMenuDelegate {
             }
 
             let activeID = resolvedActiveProfileID()
+            let refreshQueue = refreshQueue(activeID: activeID, skipActive: currentSnapshot != nil)
+            let storedAuthData: [UUID: Data]
 
-            for profile in profiles {
-                if activeID == profile.id, currentSnapshot != nil {
-                    continue
+            do {
+                storedAuthData = try store.readAllAuthData()
+            } catch {
+                for profile in refreshQueue {
+                    profileHealthStatuses[profile.id] = classifyProfileHealth(from: error)
+                    profileErrors[profile.id] = userFacingMessage(for: error)
                 }
+                rebuildMenu()
+                lastRefreshAt = Date()
+                return
+            }
 
+            for profile in refreshQueue {
                 do {
-                    let authData = try store.readAuthData(for: profile.id)
+                    guard let authData = storedAuthData[profile.id] else {
+                        throw CredentialStoreError.itemNotFound
+                    }
                     let snapshot = try await rpcClient.fetchSnapshot(authData: authData)
                     try store.updateProfile(id: profile.id, snapshot: snapshot.cached)
                     profileHealthStatuses[profile.id] = .healthy
@@ -208,134 +227,79 @@ final class AppController: NSObject, NSMenuDelegate {
     private func rebuildMenu() {
         menu.removeAllItems()
 
-        addDisabledItem(currentAccountLine())
-        addDisabledItem(currentUsageLine())
-        addDisabledItem(currentStatusLine())
-
-        menu.addItem(.separator())
-
-        let refreshTitle = isRefreshing ? "刷新中…" : "刷新全部"
-        addActionItem(title: refreshTitle, action: #selector(refreshTapped), enabled: !isRefreshing && !isSwitching)
-        addActionItem(
-            title: "从当前会话创建档案…",
-            action: #selector(createProfileTapped),
-            enabled: currentSnapshot != nil && !isSwitching
-        )
-        addActionItem(
-            title: "更新当前档案",
-            action: #selector(updateCurrentProfileTapped),
-            enabled: resolvedActiveProfileID() != nil && currentSnapshot != nil && !isSwitching
-        )
-        addActionItem(
-            title: "重命名档案…",
-            action: #selector(renameProfileTapped),
-            enabled: !profiles.isEmpty && !isSwitching
-        )
-        addActionItem(
-            title: "删除档案…",
-            action: #selector(deleteProfileTapped),
-            enabled: !profiles.isEmpty && !isSwitching
-        )
-        addActionItem(
-            title: "设置…",
-            action: #selector(openSettingsTapped),
-            enabled: !isSwitching
-        )
-
-        menu.addItem(.separator())
-
         if profiles.isEmpty {
-            addDisabledItem("还没有档案")
+            addDisabledItem("还没有账号")
         } else {
             for profile in profiles {
-                let item = NSMenuItem(
-                    title: profileMenuTitle(for: profile),
-                    action: #selector(switchProfileTapped(_:)),
-                    keyEquivalent: ""
-                )
-                item.target = self
-                item.representedObject = profile.id.uuidString
-                item.state = resolvedActiveProfileID() == profile.id ? .on : .off
-                item.isEnabled = !isSwitching
-                item.toolTip = profileTooltip(for: profile)
-                menu.addItem(item)
+                menu.addItem(makeProfileMenuItem(for: profile))
             }
         }
 
         menu.addItem(.separator())
-        addActionItem(title: "打开档案目录", action: #selector(openProfilesDirectoryTapped), enabled: true)
+
+        let refreshTitle = isRefreshing ? "刷新中…" : "刷新全部"
+        addActionItem(
+            title: refreshTitle,
+            action: #selector(refreshTapped),
+            enabled: !isRefreshing && !isSwitching && !isAddingAccount
+        )
+
+        let accountManagementItem = NSMenuItem(title: "账号管理", action: nil, keyEquivalent: "")
+        let accountManagementMenu = NSMenu(title: "账号管理")
+        accountManagementMenu.autoenablesItems = false
+        accountManagementMenu.addItem(
+            makeActionItem(
+                title: "添加账号…",
+                action: #selector(addAccountTapped),
+                enabled: !isSwitching && !isAddingAccount
+            )
+        )
+        accountManagementMenu.addItem(
+            makeActionItem(
+                title: "保存当前账号…",
+                action: #selector(createProfileTapped),
+                enabled: currentSnapshot != nil && !isSwitching && !isAddingAccount
+            )
+        )
+        accountManagementMenu.addItem(
+            makeActionItem(
+                title: "更新当前账号",
+                action: #selector(updateCurrentProfileTapped),
+                enabled: resolvedActiveProfileID() != nil && currentSnapshot != nil && !isSwitching && !isAddingAccount
+            )
+        )
+        accountManagementMenu.addItem(.separator())
+        accountManagementMenu.addItem(
+            makeActionItem(
+                title: "重命名账号…",
+                action: #selector(renameProfileTapped),
+                enabled: !profiles.isEmpty && !isSwitching && !isAddingAccount
+            )
+        )
+        accountManagementMenu.addItem(
+            makeActionItem(
+                title: "删除账号…",
+                action: #selector(deleteProfileTapped),
+                enabled: !profiles.isEmpty && !isSwitching && !isAddingAccount
+            )
+        )
+        accountManagementMenu.addItem(.separator())
+        accountManagementMenu.addItem(
+            makeActionItem(
+                title: "打开账号目录",
+                action: #selector(openProfilesDirectoryTapped),
+                enabled: true
+            )
+        )
+        menu.setSubmenu(accountManagementMenu, for: accountManagementItem)
+        menu.addItem(accountManagementItem)
+
+        addActionItem(
+            title: "设置…",
+            action: #selector(openSettingsTapped),
+            enabled: !isSwitching && !isAddingAccount
+        )
         addActionItem(title: "退出", action: #selector(quitTapped), enabled: true)
-    }
-
-    private func currentAccountLine() -> String {
-        if let currentSnapshot {
-            let activeHealth = resolvedActiveProfileID().flatMap { profileHealthStatuses[$0] } ?? .healthy
-            return "当前账号：\(currentSnapshot.account.displayLabel) · \(activeHealth.label)"
-        }
-
-        return "当前账号：未读取到"
-    }
-
-    private func currentUsageLine() -> String {
-        guard let currentSnapshot else {
-            return "剩余：-"
-        }
-
-        return "剩余：\(preciseUsageSummary(from: currentSnapshot.rateLimits) ?? "-")"
-    }
-
-    private func currentStatusLine() -> String {
-        if let statusNotice, !statusNotice.isEmpty {
-            return "状态：\(statusNotice)"
-        }
-
-        if let loadWarningNotice, !loadWarningNotice.isEmpty {
-            return "状态：\(loadWarningNotice)"
-        }
-
-        if let currentError, !currentError.isEmpty {
-            return "状态：\(currentError)"
-        }
-
-        if isSwitching {
-            return "状态：切换中…"
-        }
-
-        if isRefreshing {
-            return "状态：刷新中…"
-        }
-
-        if let lastRefreshAt {
-            return "最近刷新：\(formatDateTime(lastRefreshAt, includesSeconds: true))"
-        }
-
-        return "最近刷新：-"
-    }
-
-    private func profileMenuTitle(for profile: CodexProfile) -> String {
-        let health = profileHealthStatuses[profile.id] ?? .healthy
-        let usage = usageSummary(from: profile.cachedSnapshot?.rateLimits) ?? {
-            profileErrors[profile.id] == nil ? "未读取" : "读取失败"
-        }()
-        return "\(profile.name) · \(health.label) · \(usage)"
-    }
-
-    private func profileTooltip(for profile: CodexProfile) -> String {
-        let account = profile.cachedSnapshot?.account.displayLabel ?? "未知账号"
-        let health = profileHealthStatuses[profile.id] ?? .healthy
-        let usage = preciseUsageSummary(from: profile.cachedSnapshot?.rateLimits) ?? "没有额度数据"
-        let refreshedAt: String
-        if let fetchedAt = profile.cachedSnapshot?.fetchedAt {
-            refreshedAt = "最后刷新：\(formatDateTime(fetchedAt, includesSeconds: true))"
-        } else {
-            refreshedAt = "最后刷新：-"
-        }
-
-        var lines = [account, "状态：\(health.label)", usage, refreshedAt]
-        if let error = profileErrors[profile.id] {
-            lines.append("错误：\(error)")
-        }
-        return lines.joined(separator: "\n")
     }
 
     private func usageSummary(from snapshot: RateLimitSnapshot?) -> String? {
@@ -400,6 +364,8 @@ final class AppController: NSObject, NSMenuDelegate {
             if let currentSnapshot,
                let usageSummary = compactUsageSummary(from: currentSnapshot.rateLimits) {
                 title = usageSummary
+            } else if isAddingAccount {
+                title = "添加中"
             } else if isSwitching {
                 title = "切换中"
             } else if isRefreshing {
@@ -469,6 +435,102 @@ final class AppController: NSObject, NSMenuDelegate {
         menu.addItem(item)
     }
 
+    private func makeActionItem(title: String, action: Selector, enabled: Bool) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        item.isEnabled = enabled
+        return item
+    }
+
+    private func makeProfileMenuItem(for profile: CodexProfile) -> NSMenuItem {
+        let item = NSMenuItem(
+            title: profile.name,
+            action: #selector(switchProfileTapped(_:)),
+            keyEquivalent: ""
+        )
+        item.target = self
+        item.representedObject = profile.id.uuidString
+        item.isEnabled = true
+        item.view = AccountMenuRowView(model: makeAccountRowModel(for: profile))
+        return item
+    }
+
+    private func makeAccountRowModel(for profile: CodexProfile) -> AccountMenuRowModel {
+        AccountMenuRowModel(
+            profileID: profile.id,
+            name: profile.name,
+            primaryUsageText: accountUsageSummary(
+                window: profile.cachedSnapshot?.rateLimits.primary,
+                label: "5h",
+                dateStyle: .time
+            ),
+            secondaryUsageText: accountUsageSummary(
+                window: profile.cachedSnapshot?.rateLimits.secondary,
+                label: "1w",
+                dateStyle: .monthDay
+            ),
+            indicatorColor: indicatorColor(for: profile),
+            isCurrent: resolvedActiveProfileID() == profile.id,
+            isEnabled: !isSwitching && !isAddingAccount
+        )
+    }
+
+    private func refreshQueue(activeID: UUID?, skipActive: Bool) -> [CodexProfile] {
+        var orderedProfiles = profiles
+
+        if let activeID,
+           let activeIndex = orderedProfiles.firstIndex(where: { $0.id == activeID }) {
+            let activeProfile = orderedProfiles.remove(at: activeIndex)
+            if !skipActive {
+                orderedProfiles.insert(activeProfile, at: 0)
+            }
+        }
+
+        if skipActive, let activeID {
+            orderedProfiles.removeAll { $0.id == activeID }
+        }
+
+        return orderedProfiles
+    }
+
+    private func accountUsageSummary(
+        window: RateLimitWindow?,
+        label: String,
+        dateStyle: UsageDateStyle
+    ) -> String {
+        guard let window else { return "\(label) -  -" }
+        let resetText = formatUsageResetDate(window.resetDate, style: dateStyle)
+        return "\(label) \(window.remainingPercentText)  \(resetText)"
+    }
+
+    private func indicatorColor(for profile: CodexProfile) -> NSColor {
+        let health = profileHealthStatuses[profile.id] ?? .healthy
+        guard health.isHealthy else {
+            return .systemRed
+        }
+
+        guard let snapshot = profile.cachedSnapshot else {
+            return .systemRed
+        }
+
+        let plan = (snapshot.account.planType ?? snapshot.rateLimits.planType ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !plan.isEmpty, plan != "free" else {
+            return .systemRed
+        }
+
+        guard let primary = snapshot.rateLimits.primary, let secondary = snapshot.rateLimits.secondary else {
+            return .systemRed
+        }
+
+        if primary.remainingPercent <= 0 || secondary.remainingPercent <= 0 {
+            return .systemYellow
+        }
+
+        return .systemGreen
+    }
+
     private func promptForProfileName(
         title: String,
         informativeText: String,
@@ -530,6 +592,53 @@ final class AppController: NSObject, NSMenuDelegate {
         return profiles.first(where: { $0.id == profileID })
     }
 
+    private func promptForBrowserLogin() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "添加账号"
+        alert.informativeText = """
+        已打开官方浏览器登录页。
+
+        登录完成后，回到这里继续保存账号。
+        """
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "继续")
+        alert.addButton(withTitle: "取消")
+
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    private func upsertProfileFromAddedAccount(
+        authData: Data,
+        snapshot: CodexSnapshot
+    ) throws -> String {
+        if let existing = profiles.first(where: { profile in
+            profile.cachedSnapshot?.account.matchesIdentity(snapshot.account) == true
+        }) {
+            try store.updateProfile(
+                id: existing.id,
+                authData: authData,
+                snapshot: snapshot.cached
+            )
+            return "已更新账号：\(existing.name)"
+        }
+
+        let defaultName = snapshot.account.email ?? "Codex 账号"
+        guard let name = promptForProfileName(
+            title: "保存账号",
+            informativeText: "给这个账号起一个容易辨认的名字。",
+            defaultValue: defaultName
+        ) else {
+            throw BrowserLoginError.cancelled
+        }
+
+        let profile = try store.createProfile(
+            name: name,
+            authData: authData,
+            snapshot: snapshot.cached
+        )
+        return "已添加账号：\(profile.name)"
+    }
+
     @objc
     private func refreshTapped() {
         refreshAllProfiles()
@@ -539,10 +648,10 @@ final class AppController: NSObject, NSMenuDelegate {
     private func createProfileTapped() {
         guard let currentSnapshot else { return }
 
-        let defaultName = currentSnapshot.account.email ?? "Codex 档案"
+        let defaultName = currentSnapshot.account.email ?? "Codex 账号"
         guard let name = promptForProfileName(
-            title: "新建档案",
-            informativeText: "输入一个容易辨认的名字。",
+            title: "保存当前账号",
+            informativeText: "给当前账号起一个容易辨认的名字。",
             defaultValue: defaultName
         ) else {
             return
@@ -559,13 +668,57 @@ final class AppController: NSObject, NSMenuDelegate {
             settings.lastActiveProfileID = profile.id
             try store.saveSettings(settings)
 
-            statusNotice = "已保存档案：\(profile.name)"
+            statusNotice = "已保存账号：\(profile.name)"
             reloadLocalState()
             rebuildMenu()
             updateStatusTitle()
         } catch {
             statusNotice = userFacingMessage(for: error)
             rebuildMenu()
+        }
+    }
+
+    @objc
+    private func addAccountTapped() {
+        guard !isAddingAccount, !isSwitching else { return }
+
+        isAddingAccount = true
+        statusNotice = "正在发起浏览器登录…"
+        rebuildMenu()
+        updateStatusTitle()
+
+        Task {
+            defer {
+                isAddingAccount = false
+                rebuildMenu()
+                updateStatusTitle()
+            }
+
+            do {
+                let session = try await browserLoginService.start()
+                _ = NSWorkspace.shared.open(session.authorizationURL)
+
+                guard promptForBrowserLogin() else {
+                    session.cancel()
+                    throw BrowserLoginError.cancelled
+                }
+
+                statusNotice = "等待浏览器登录完成…"
+                rebuildMenu()
+                updateStatusTitle()
+
+                let authData = try await session.waitForCompletion()
+                let snapshot = try await rpcClient.fetchSnapshot(authData: authData)
+                statusNotice = try upsertProfileFromAddedAccount(
+                    authData: authData,
+                    snapshot: snapshot
+                )
+                reloadLocalState()
+                rebuildMenu()
+                updateStatusTitle()
+            } catch {
+                statusNotice = userFacingMessage(for: error)
+            }
         }
     }
 
@@ -587,9 +740,9 @@ final class AppController: NSObject, NSMenuDelegate {
             if let index = profiles.firstIndex(where: { $0.id == activeID }) {
                 profiles[index].cachedSnapshot = currentSnapshot.cached
                 profiles[index].updatedAt = Date()
-                statusNotice = "已更新档案：\(profiles[index].name)"
+                statusNotice = "已更新账号：\(profiles[index].name)"
             } else {
-                statusNotice = "已更新当前档案"
+                statusNotice = "已更新当前账号"
             }
 
             reloadLocalState()
@@ -603,16 +756,16 @@ final class AppController: NSObject, NSMenuDelegate {
     @objc
     private func renameProfileTapped() {
         guard let profile = promptForProfileSelection(
-            title: "重命名档案",
-            informativeText: "选择要重命名的档案。",
+            title: "重命名账号",
+            informativeText: "选择要重命名的账号。",
             confirmTitle: "继续"
         ) else {
             return
         }
 
         guard let newName = promptForProfileName(
-            title: "重命名档案",
-            informativeText: "给档案一个更清晰的名字。",
+            title: "重命名账号",
+            informativeText: "给账号一个更清晰的名字。",
             defaultValue: profile.name
         ) else {
             return
@@ -620,7 +773,7 @@ final class AppController: NSObject, NSMenuDelegate {
 
         do {
             try store.updateProfile(id: profile.id, name: newName)
-            statusNotice = "已重命名：\(profile.name) -> \(newName)"
+            statusNotice = "已重命名账号：\(profile.name) -> \(newName)"
             reloadLocalState()
             rebuildMenu()
         } catch {
@@ -632,8 +785,8 @@ final class AppController: NSObject, NSMenuDelegate {
     @objc
     private func deleteProfileTapped() {
         guard let profile = promptForProfileSelection(
-            title: "删除档案",
-            informativeText: "选择要删除的档案。删除后会同时移除 Keychain 凭据。",
+            title: "删除账号",
+            informativeText: "选择要删除的账号。删除后会同时移除 Keychain 凭据。",
             confirmTitle: "删除"
         ) else {
             return
@@ -646,7 +799,7 @@ final class AppController: NSObject, NSMenuDelegate {
                 try? store.saveSettings(settings)
             }
 
-            statusNotice = "已删除档案：\(profile.name)"
+            statusNotice = "已删除账号：\(profile.name)"
             reloadLocalState()
             rebuildMenu()
         } catch {
@@ -747,6 +900,20 @@ final class AppController: NSObject, NSMenuDelegate {
         formatter.dateFormat = Calendar.current.isDate(date, equalTo: Date(), toGranularity: .day)
             ? (includesSeconds ? "HH:mm:ss" : "HH:mm")
             : (includesSeconds ? "MM-dd HH:mm:ss" : "MM-dd HH:mm")
+        return formatter.string(from: date)
+    }
+
+    private func formatUsageResetDate(_ date: Date?, style: UsageDateStyle) -> String {
+        guard let date else { return "-" }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        switch style {
+        case .time:
+            formatter.dateFormat = "HH:mm"
+        case .monthDay:
+            formatter.dateFormat = "M月d日"
+        }
         return formatter.string(from: date)
     }
 

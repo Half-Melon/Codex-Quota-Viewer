@@ -23,13 +23,17 @@ struct SettingsLoadResult {
     let issues: [LoadIssue]
 }
 
+private struct StoredCredentialBundle: Codable {
+    var items: [String: Data]
+}
+
 enum ProfileStoreError: LocalizedError {
     case profileNotFound
 
     var errorDescription: String? {
         switch self {
         case .profileNotFound:
-            return "找不到指定档案。"
+            return "找不到指定账号。"
         }
     }
 }
@@ -37,6 +41,7 @@ enum ProfileStoreError: LocalizedError {
 final class ProfileStore {
     static let credentialService = "CodexAccountSwitcher"
     static let legacyCredentialService = "CodexQuickSwitch"
+    static let bundledCredentialAccount = "__credential_bundle_v1__"
 
     private let fileManager = FileManager.default
     private let encoder: JSONEncoder
@@ -44,6 +49,8 @@ final class ProfileStore {
     private let credentialStore: any CredentialStore
     private let legacyCredentialStore: (any CredentialStore)?
     private let legacyBaseURL: URL?
+    private let credentialCacheLock = NSLock()
+    private var cachedCredentialsByAccount: [String: Data]?
 
     let baseURL: URL
     let profilesDirectoryURL: URL
@@ -111,7 +118,7 @@ final class ProfileStore {
                     return try decoder.decode(CodexProfile.self, from: data)
                 } catch {
                     issues.append(
-                        LoadIssue(message: "档案文件损坏：\(url.lastPathComponent)")
+                        LoadIssue(message: "账号文件损坏：\(url.lastPathComponent)")
                     )
                     return nil
                 }
@@ -180,13 +187,15 @@ final class ProfileStore {
         let account = credentialAccount(for: profile.id)
 
         if let authData {
-            let previousCredential = try readCredentialIfExists(account: account)
+            let previousCredentials = try readAllCredentialsByAccount()
+            var updatedCredentials = previousCredentials
+            updatedCredentials[account] = authData
 
             do {
-                try credentialStore.upsert(data: authData, account: account)
+                try writeAllCredentialsByAccount(updatedCredentials)
                 try data.write(to: profileURL, options: .atomic)
             } catch {
-                try? restoreCredential(previousCredential, account: account)
+                try? writeAllCredentialsByAccount(previousCredentials)
                 throw error
             }
         } else {
@@ -218,7 +227,20 @@ final class ProfileStore {
     }
 
     func readAuthData(for profileID: UUID) throws -> Data {
-        try credentialStore.read(account: credentialAccount(for: profileID))
+        let account = credentialAccount(for: profileID)
+        guard let data = try readAllCredentialsByAccount()[account] else {
+            throw CredentialStoreError.itemNotFound
+        }
+        return data
+    }
+
+    func readAllAuthData() throws -> [UUID: Data] {
+        Dictionary(
+            uniqueKeysWithValues: try readAllCredentialsByAccount().compactMap { account, data in
+                guard let profileID = UUID(uuidString: account) else { return nil }
+                return (profileID, data)
+            }
+        )
     }
 
     func currentAuthData() throws -> Data {
@@ -237,11 +259,21 @@ final class ProfileStore {
 
     func deleteProfile(id: UUID) throws {
         let profileURL = profileURL(for: id)
-        if fileManager.fileExists(atPath: profileURL.path) {
-            try fileManager.removeItem(at: profileURL)
-        }
+        let account = credentialAccount(for: id)
+        let previousCredentials = try readAllCredentialsByAccount()
+        var updatedCredentials = previousCredentials
+        updatedCredentials.removeValue(forKey: account)
 
-        try credentialStore.delete(account: credentialAccount(for: id))
+        do {
+            try writeAllCredentialsByAccount(updatedCredentials)
+
+            if fileManager.fileExists(atPath: profileURL.path) {
+                try fileManager.removeItem(at: profileURL)
+            }
+        } catch {
+            try? writeAllCredentialsByAccount(previousCredentials)
+            throw error
+        }
     }
 
     func migrateLegacyCredentialsIfNeeded(settings: inout AppSettings) -> MigrationResult {
@@ -254,39 +286,96 @@ final class ProfileStore {
         }
 
         var result = MigrationResult()
-        migrateLegacyKeychainEntriesIfNeeded(result: &result)
+        let profiles = loadProfiles()
+        var bundledCredentials = (try? readCredentialBundleFromStore()) ?? [:]
+        var bundleChanged = false
+        let legacySidecarsByProfileID: [UUID: URL] = Dictionary(
+            uniqueKeysWithValues: legacyFiles.compactMap { url in
+                guard let profileID = legacyProfileID(from: url) else { return nil }
+                return (profileID, url)
+            }
+        )
+        var rawCurrentAccountsToDelete = Set<String>()
+        var rawLegacyAccountsToDelete = Set<String>()
+        var sidecarsToDelete: [URL] = []
 
-        for legacyURL in legacyFiles {
-            let fileName = legacyURL.lastPathComponent
+        for legacyURL in legacyFiles where legacyProfileID(from: legacyURL) == nil {
+            result.errors.append("旧账号文件无法识别：\(legacyURL.lastPathComponent)")
+        }
 
-            guard let profileID = legacyProfileID(from: legacyURL) else {
-                result.errors.append("旧档案文件无法识别：\(fileName)")
+        for profile in profiles {
+            let account = credentialAccount(for: profile.id)
+            let sidecarURL = legacySidecarsByProfileID[profile.id]
+
+            if let sidecarURL,
+               !fileManager.fileExists(atPath: profileURL(for: profile.id).path) {
+                result.errors.append("旧账号凭据缺少对应 metadata：\(sidecarURL.lastPathComponent)")
                 continue
             }
 
-            let profileURL = profileURL(for: profileID)
-            guard fileManager.fileExists(atPath: profileURL.path) else {
-                result.errors.append("旧档案凭据缺少对应 metadata：\(fileName)")
-                continue
+            if bundledCredentials[account] == nil {
+                do {
+                    if let data = try readLegacyCredentialData(
+                        account: account,
+                        sidecarURL: sidecarURL
+                    ) {
+                        bundledCredentials[account] = data
+                        bundleChanged = true
+                        result.migratedCount += 1
+                    }
+                } catch {
+                    result.errors.append("迁移账号 \(profile.name) 失败：\(error.localizedDescription)")
+                    continue
+                }
+            }
+
+            guard bundledCredentials[account] != nil else { continue }
+
+            do {
+                if try credentialStore.contains(account: account) {
+                    rawCurrentAccountsToDelete.insert(account)
+                }
+            } catch {
+                result.errors.append("检查旧 Keychain 凭据失败：\(profile.name)")
             }
 
             do {
-                let account = credentialAccount(for: profileID)
-                if try credentialStore.contains(account: account) {
-                    try fileManager.removeItem(at: legacyURL)
-                    continue
+                if try legacyCredentialStore?.contains(account: account) == true {
+                    rawLegacyAccountsToDelete.insert(account)
                 }
-
-                let data = try Data(contentsOf: legacyURL)
-                try credentialStore.upsert(data: data, account: account)
-                try fileManager.removeItem(at: legacyURL)
-                result.migratedCount += 1
             } catch {
-                result.errors.append("迁移 \(fileName) 失败：\(error.localizedDescription)")
+                result.errors.append("检查旧 Keychain 服务失败：\(profile.name)")
+            }
+
+            if let sidecarURL {
+                sidecarsToDelete.append(sidecarURL)
             }
         }
 
-        if legacyAuthSidecarURLs().isEmpty {
+        if bundleChanged {
+            do {
+                try writeAllCredentialsByAccount(bundledCredentials)
+            } catch {
+                result.errors.append("迁移账号凭据失败：\(error.localizedDescription)")
+                return result
+            }
+        } else {
+            cacheCredentials(bundledCredentials)
+        }
+
+        for account in rawCurrentAccountsToDelete {
+            try? credentialStore.delete(account: account)
+        }
+
+        for account in rawLegacyAccountsToDelete {
+            try? legacyCredentialStore?.delete(account: account)
+        }
+
+        for sidecarURL in sidecarsToDelete {
+            try? fileManager.removeItem(at: sidecarURL)
+        }
+
+        if !hasLegacyArtifacts(for: profiles) {
             settings.storageVersion = AppSettings.currentStorageVersion
         }
 
@@ -306,27 +395,30 @@ final class ProfileStore {
         profilesDirectoryURL.appendingPathComponent("\(id.uuidString).json", isDirectory: false)
     }
 
-    private func authURL(for id: UUID) -> URL {
-        profilesDirectoryURL.appendingPathComponent("\(id.uuidString).auth.json", isDirectory: false)
-    }
-
     private func credentialAccount(for id: UUID) -> String {
         id.uuidString
     }
 
-    private func readCredentialIfExists(account: String) throws -> Data? {
-        if try credentialStore.contains(account: account) {
-            return try credentialStore.read(account: account)
+    private func readAllCredentialsByAccount() throws -> [String: Data] {
+        if let cached = cachedCredentials() {
+            return cached
         }
-        return nil
+
+        let loaded = try readCredentialBundleFromStore()
+        cacheCredentials(loaded)
+        return loaded
     }
 
-    private func restoreCredential(_ data: Data?, account: String) throws {
-        if let data {
-            try credentialStore.upsert(data: data, account: account)
-        } else {
-            try credentialStore.delete(account: account)
+    private func writeAllCredentialsByAccount(_ credentials: [String: Data]) throws {
+        if credentials.isEmpty {
+            try credentialStore.delete(account: Self.bundledCredentialAccount)
+            cacheCredentials([:])
+            return
         }
+
+        let data = try encoder.encode(StoredCredentialBundle(items: credentials))
+        try credentialStore.upsert(data: data, account: Self.bundledCredentialAccount)
+        cacheCredentials(credentials)
     }
 
     private func migrateLegacyStorageLocationIfNeeded() {
@@ -359,29 +451,66 @@ final class ProfileStore {
         try? fileManager.removeItem(at: legacyBaseURL)
     }
 
-    private func migrateLegacyKeychainEntriesIfNeeded(result: inout MigrationResult) {
-        guard let legacyCredentialStore else { return }
+    private func readCredentialBundleFromStore() throws -> [String: Data] {
+        do {
+            let data = try credentialStore.read(account: Self.bundledCredentialAccount)
+            let bundle = try decoder.decode(StoredCredentialBundle.self, from: data)
+            return bundle.items
+        } catch CredentialStoreError.itemNotFound {
+            return [:]
+        } catch is DecodingError {
+            throw CredentialStoreError.invalidStoredData
+        }
+    }
 
-        for profile in loadProfiles() {
+    private func readLegacyCredentialData(
+        account: String,
+        sidecarURL: URL?
+    ) throws -> Data? {
+        if try credentialStore.contains(account: account) {
+            return try credentialStore.read(account: account)
+        }
+
+        if let sidecarURL {
+            return try Data(contentsOf: sidecarURL)
+        }
+
+        if try legacyCredentialStore?.contains(account: account) == true {
+            return try legacyCredentialStore?.read(account: account)
+        }
+
+        return nil
+    }
+
+    private func hasLegacyArtifacts(for profiles: [CodexProfile]) -> Bool {
+        if !legacyAuthSidecarURLs().isEmpty {
+            return true
+        }
+
+        for profile in profiles {
             let account = credentialAccount(for: profile.id)
+            if (try? credentialStore.contains(account: account)) == true {
+                return true
+            }
 
-            do {
-                if try credentialStore.contains(account: account) {
-                    continue
-                }
-
-                guard try legacyCredentialStore.contains(account: account) else {
-                    continue
-                }
-
-                let data = try legacyCredentialStore.read(account: account)
-                try credentialStore.upsert(data: data, account: account)
-                try legacyCredentialStore.delete(account: account)
-                result.migratedCount += 1
-            } catch {
-                result.errors.append("迁移旧 Keychain 凭据失败：\(profile.name)")
+            if (try? legacyCredentialStore?.contains(account: account)) == true {
+                return true
             }
         }
+
+        return false
+    }
+
+    private func cachedCredentials() -> [String: Data]? {
+        credentialCacheLock.lock()
+        defer { credentialCacheLock.unlock() }
+        return cachedCredentialsByAccount
+    }
+
+    private func cacheCredentials(_ credentials: [String: Data]) {
+        credentialCacheLock.lock()
+        cachedCredentialsByAccount = credentials
+        credentialCacheLock.unlock()
     }
 
     private func legacyAuthSidecarURLs() -> [URL] {
