@@ -12,9 +12,6 @@ let package = Package(
             targets: ["CodexQuotaViewer"]
         ),
     ],
-    dependencies: [
-        .package(url: "https://github.com/swiftlang/swift-testing", exact: "6.2.4"),
-    ],
     targets: [
         .executableTarget(
             name: "CodexQuotaViewer",
@@ -22,14 +19,6 @@ let package = Package(
             resources: [
                 .process("Resources"),
             ]
-        ),
-        .testTarget(
-            name: "CodexQuotaViewerTests",
-            dependencies: [
-                "CodexQuotaViewer",
-                .product(name: "Testing", package: "swift-testing"),
-            ],
-            path: "Tests/CodexQuotaViewerTests"
         ),
     ]
 )

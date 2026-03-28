@@ -2,6 +2,7 @@
 .build/
 dist/
 .swiftpm/
+docs/
 
 *.app
 *.dmg
