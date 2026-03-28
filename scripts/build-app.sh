@@ -13,6 +13,7 @@ swift package clean
 swift build -c release --product CodexQuotaViewer
 BIN_DIR="$(swift build -c release --show-bin-path)"
 swift scripts/generate-app-icon.swift "$ROOT_DIR"
+xattr -c "$ROOT_DIR/dist/CodexQuotaViewer-icon-preview.png" 2>/dev/null || true
 rm -f "$ICON_ICNS"
 iconutil -c icns "$ICONSET_DIR" -o "$ICON_ICNS"
 
@@ -22,7 +23,6 @@ mkdir -p "$APP_DIR/Contents/Resources"
 
 cp "$BIN_DIR/$APP_NAME" "$APP_DIR/Contents/MacOS/$APP_NAME"
 cp "$ICON_ICNS" "$APP_DIR/Contents/Resources/AppIcon.icns"
-find "$BIN_DIR" -maxdepth 1 -name '*.bundle' -exec cp -R {} "$APP_DIR/Contents/Resources/" \;
 
 cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -36,7 +36,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
-    <string>com.aikris.CodexQuotaViewer</string>
+    <string>dev.codex.quotaviewer</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
@@ -63,4 +63,6 @@ else
   echo "warning: codesign 不可用，跳过 ad-hoc 签名。" >&2
 fi
 
-echo "Built app: $APP_DIR"
+xattr -cr "$APP_DIR" 2>/dev/null || true
+
+echo "Built app: $APP_NAME.app"

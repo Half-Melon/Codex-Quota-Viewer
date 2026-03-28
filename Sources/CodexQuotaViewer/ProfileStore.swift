@@ -18,7 +18,6 @@ final class ProfileStore {
     let settingsURL: URL
     let currentAuthURL: URL
     let currentConfigURL: URL
-    private let legacyBaseURLs: [URL]
 
     init(
         baseURL: URL? = nil,
@@ -36,14 +35,6 @@ final class ProfileStore {
             .appendingPathComponent("Application Support", isDirectory: true)
             .appendingPathComponent(AppIdentity.supportDirectoryName, isDirectory: true)
         self.baseURL = baseURL ?? defaultBaseURL
-        legacyBaseURLs = baseURL == nil
-            ? AppIdentity.legacySupportDirectoryNames.map {
-                home
-                    .appendingPathComponent("Library", isDirectory: true)
-                    .appendingPathComponent("Application Support", isDirectory: true)
-                    .appendingPathComponent($0, isDirectory: true)
-            }
-            : []
         settingsURL = self.baseURL.appendingPathComponent("settings.json", isDirectory: false)
         self.currentAuthURL = currentAuthURL ?? home
             .appendingPathComponent(".codex", isDirectory: true)
@@ -53,7 +44,6 @@ final class ProfileStore {
     }
 
     func loadSettingsResult() -> SettingsLoadResult {
-        migrateLegacyBaseDirectoryIfNeeded()
         ensureBaseDirectoryExists()
 
         guard fileManager.fileExists(atPath: settingsURL.path) else {
@@ -73,7 +63,6 @@ final class ProfileStore {
     }
 
     func saveSettings(_ settings: AppSettings) throws {
-        migrateLegacyBaseDirectoryIfNeeded()
         ensureBaseDirectoryExists()
         let data = try encoder.encode(settings)
         try data.write(to: settingsURL, options: .atomic)
@@ -103,30 +92,5 @@ final class ProfileStore {
             withIntermediateDirectories: true,
             attributes: nil
         )
-    }
-
-    private func migrateLegacyBaseDirectoryIfNeeded() {
-        guard !fileManager.fileExists(atPath: baseURL.path) else {
-            return
-        }
-
-        for legacyURL in legacyBaseURLs where fileManager.fileExists(atPath: legacyURL.path) {
-            do {
-                try fileManager.moveItem(at: legacyURL, to: baseURL)
-            } catch {
-                try? fileManager.createDirectory(
-                    at: baseURL,
-                    withIntermediateDirectories: true,
-                    attributes: nil
-                )
-
-                let legacySettingsURL = legacyURL.appendingPathComponent("settings.json", isDirectory: false)
-                if fileManager.fileExists(atPath: legacySettingsURL.path),
-                   let data = try? Data(contentsOf: legacySettingsURL) {
-                    try? data.write(to: settingsURL, options: .atomic)
-                }
-            }
-            return
-        }
     }
 }

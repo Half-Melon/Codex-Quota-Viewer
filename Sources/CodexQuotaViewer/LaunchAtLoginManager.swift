@@ -14,22 +14,12 @@ enum LaunchAtLoginError: LocalizedError {
 struct LaunchAtLoginManager {
     private let fileManager = FileManager.default
     private let label = AppIdentity.launchAgentLabel
-    private let legacyLabels = AppIdentity.legacyLaunchAgentLabels
 
     private var plistURL: URL {
         fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent("LaunchAgents", isDirectory: true)
             .appendingPathComponent("\(label).plist", isDirectory: false)
-    }
-
-    private var legacyPlistURLs: [URL] {
-        legacyLabels.map {
-            fileManager.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library", isDirectory: true)
-                .appendingPathComponent("LaunchAgents", isDirectory: true)
-                .appendingPathComponent("\($0).plist", isDirectory: false)
-        }
     }
 
     func sync(enabled: Bool) throws {
@@ -69,12 +59,6 @@ struct LaunchAtLoginManager {
         try data.write(to: plistURL, options: .atomic)
 
         let domain = "gui/\(getuid())"
-        for legacyPlistURL in legacyPlistURLs {
-            _ = try? runLaunchctl(arguments: ["bootout", domain, legacyPlistURL.path], ignoreFailure: true)
-            if fileManager.fileExists(atPath: legacyPlistURL.path) {
-                try? fileManager.removeItem(at: legacyPlistURL)
-            }
-        }
         _ = try? runLaunchctl(arguments: ["bootout", domain, plistURL.path], ignoreFailure: true)
         do {
             try runLaunchctl(arguments: ["bootstrap", domain, plistURL.path], ignoreFailure: false)
@@ -89,12 +73,6 @@ struct LaunchAtLoginManager {
 
     private func disable() throws {
         let domain = "gui/\(getuid())"
-        for legacyPlistURL in legacyPlistURLs {
-            _ = try? runLaunchctl(arguments: ["bootout", domain, legacyPlistURL.path], ignoreFailure: true)
-            if fileManager.fileExists(atPath: legacyPlistURL.path) {
-                try fileManager.removeItem(at: legacyPlistURL)
-            }
-        }
         _ = try? runLaunchctl(arguments: ["bootout", domain, plistURL.path], ignoreFailure: true)
         if fileManager.fileExists(atPath: plistURL.path) {
             try fileManager.removeItem(at: plistURL)
