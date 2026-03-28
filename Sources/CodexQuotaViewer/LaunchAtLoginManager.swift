@@ -76,7 +76,15 @@ struct LaunchAtLoginManager {
             }
         }
         _ = try? runLaunchctl(arguments: ["bootout", domain, plistURL.path], ignoreFailure: true)
-        try runLaunchctl(arguments: ["bootstrap", domain, plistURL.path], ignoreFailure: false)
+        do {
+            try runLaunchctl(arguments: ["bootstrap", domain, plistURL.path], ignoreFailure: false)
+        } catch {
+            _ = try? runLaunchctl(arguments: ["bootout", domain, plistURL.path], ignoreFailure: true)
+            if fileManager.fileExists(atPath: plistURL.path) {
+                try? fileManager.removeItem(at: plistURL)
+            }
+            throw error
+        }
     }
 
     private func disable() throws {

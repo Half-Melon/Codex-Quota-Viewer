@@ -72,6 +72,18 @@ func apiKeyStatusTexts(details: APIKeyProfileDetails?) -> (String, String) {
     return (primary, secondary.isEmpty ? "官方额度不可用" : secondary)
 }
 
+func runtimeIdentityKey(for runtimeMaterial: ProfileRuntimeMaterial) -> String {
+    runtimeIdentityKey(authData: runtimeMaterial.authData)
+}
+
+func runtimeIdentityKey(authData: Data) -> String {
+    guard let canonicalJSON = canonicalJSONData(from: authData) else {
+        return authData.base64EncodedString()
+    }
+
+    return canonicalJSON.base64EncodedString()
+}
+
 private func isAPIKeyAuthMode(_ rawValue: String?) -> Bool {
     rawValue?
         .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -147,4 +159,13 @@ private func displayHost(from rawURL: String?) -> String? {
         return nil
     }
     return host
+}
+
+private func canonicalJSONData(from data: Data) -> Data? {
+    guard let object = try? JSONSerialization.jsonObject(with: data),
+          JSONSerialization.isValidJSONObject(object) else {
+        return nil
+    }
+
+    return try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
 }

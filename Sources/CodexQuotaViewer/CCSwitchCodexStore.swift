@@ -83,7 +83,7 @@ final class CCSwitchCodexStore {
             }
 
             let runtimeMaterial = ProfileRuntimeMaterial(authData: authData, configData: configData)
-            let runtimeKey = runtimeFingerprint(for: runtimeMaterial)
+            let runtimeKey = runtimeIdentityKey(for: runtimeMaterial)
             guard seenRuntimeKeys.insert(runtimeKey).inserted else {
                 continue
             }
@@ -115,12 +115,6 @@ final class CCSwitchCodexStore {
         }
 
         return true
-    }
-
-    private static func runtimeFingerprint(for runtimeMaterial: ProfileRuntimeMaterial) -> String {
-        let auth = runtimeMaterial.authData.base64EncodedString()
-        let config = runtimeMaterial.configData?.base64EncodedString() ?? ""
-        return auth + "|" + config
     }
 
     private static func decodeHexString(_ hex: String) -> String? {

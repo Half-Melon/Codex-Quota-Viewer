@@ -1,6 +1,6 @@
 import Foundation
 
-enum CodexRPCError: LocalizedError {
+enum CodexRPCError: LocalizedError, Equatable {
     case missingExecutable
     case timeout
     case notLoggedIn
@@ -149,6 +149,8 @@ struct CodexRPCClient: Sendable {
             group.addTask {
                 try await self.readSnapshot(
                     from: stdout.fileHandleForReading,
+                    stderrHandle: stderr.fileHandleForReading,
+                    process: process,
                     to: stdin.fileHandleForWriting
                 )
             }
@@ -172,6 +174,8 @@ struct CodexRPCClient: Sendable {
 
     private func readSnapshot(
         from outputHandle: FileHandle,
+        stderrHandle: FileHandle,
+        process: Process,
         to inputHandle: FileHandle
     ) async throws -> CodexSnapshot {
         let decoder = JSONDecoder()
@@ -259,6 +263,16 @@ struct CodexRPCClient: Sendable {
             }
         }
 
+        process.waitUntilExit()
+
+        let stderrText = try readPipeText(from: stderrHandle)
+        if let failureError = codexProcessFailureError(
+            terminationStatus: process.terminationStatus,
+            stderrText: stderrText
+        ) {
+            throw failureError
+        }
+
         throw CodexRPCError.invalidResponse("app-server 提前结束。")
     }
 
@@ -288,6 +302,12 @@ struct CodexRPCClient: Sendable {
         return object
     }
 
+    private func readPipeText(from handle: FileHandle) throws -> String {
+        let data = handle.readDataToEndOfFile()
+        return String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
     private func launchConfiguration() throws -> (executableURL: URL, arguments: [String]) {
         let fileManager = FileManager.default
         let bundled = URL(fileURLWithPath: "/Applications/Codex.app/Contents/Resources/codex")
@@ -302,4 +322,27 @@ struct CodexRPCClient: Sendable {
 
         throw CodexRPCError.missingExecutable
     }
+}
+
+func codexProcessFailureError(
+    terminationStatus: Int32,
+    stderrText: String
+) -> CodexRPCError? {
+    if !stderrText.isEmpty {
+        let lowered = stderrText.lowercased()
+        if lowered.contains("codex"), lowered.contains("no such file") {
+            return .missingExecutable
+        }
+
+        if terminationStatus != 0 {
+            return .rpc("app-server 启动失败（exit \(terminationStatus)）：\(stderrText)")
+        }
+        return .rpc(stderrText)
+    }
+
+    guard terminationStatus != 0 else {
+        return nil
+    }
+
+    return .rpc("app-server 以退出码 \(terminationStatus) 提前结束。")
 }

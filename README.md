@@ -83,10 +83,12 @@ open ./dist/CodexQuotaViewer.dmg
 - `cc-switch` 账号额度来自 `~/.cc-switch/cc-switch.db`
 - 应用会显式跳过 API Key 登录态的额度展示
 - 应用内部已禁止覆盖当前 `~/.codex/auth.json` 和 `~/.codex/config.toml`
-- `额度条` 图标在数据过旧时会变灰
+- 选择“手动”刷新后，菜单打开不会自动刷新，需要手动点“刷新全部”
+- `额度条` 图标在数据过旧时会变灰；手动模式下超过 30 分钟未刷新也会判定为过旧
 - 文本图标直接加载官方 Blossom SVG，并按系统外观切换黑/白版本
 - 开机启动通过当前用户的 `LaunchAgent` 实现，只在从 `.app` 包启动时可配置
 - `build-dmg.sh` 会生成一个可拖到“应用程序”目录安装的 `.dmg`
+- `build-app.sh` 默认会尝试做本机 ad-hoc 签名；如果签名失败会直接报错，不再静默继续
 
 ## 安全
 

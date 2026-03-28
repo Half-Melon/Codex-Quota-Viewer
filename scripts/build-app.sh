@@ -56,6 +56,11 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 PLIST
 
 xattr -cr "$APP_DIR" 2>/dev/null || true
-codesign --force --deep --sign - "$APP_DIR" >/dev/null 2>&1 || true
+
+if command -v codesign >/dev/null 2>&1; then
+  codesign --force --deep --sign - "$APP_DIR"
+else
+  echo "warning: codesign 不可用，跳过 ad-hoc 签名。" >&2
+fi
 
 echo "Built app: $APP_DIR"

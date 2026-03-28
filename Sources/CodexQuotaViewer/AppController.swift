@@ -33,6 +33,14 @@ enum MenuBlueprintItem: Equatable {
     case action(title: String, isEnabled: Bool)
 }
 
+enum ProfileIndicatorKind: Equatable {
+    case error
+    case neutral
+    case apiKey
+    case limited
+    case healthy
+}
+
 func buildVisibleMenuNotices(
     statusNotice: String?,
     loadWarningNotice: String?,
@@ -112,6 +120,90 @@ func buildMenuBlueprint(
     return items
 }
 
+func shouldAutoRefreshWhenMenuOpens(_ refreshIntervalPreset: RefreshIntervalPreset) -> Bool {
+    refreshIntervalPreset.interval != nil
+}
+
+func staleThreshold(for refreshIntervalPreset: RefreshIntervalPreset) -> TimeInterval {
+    if let interval = refreshIntervalPreset.interval {
+        return interval * 1.5
+    }
+
+    return 30 * 60
+}
+
+func isSnapshotDataStale(
+    lastRefreshAt: Date?,
+    refreshIntervalPreset: RefreshIntervalPreset,
+    now: Date = Date()
+) -> Bool {
+    guard let lastRefreshAt else {
+        return false
+    }
+
+    return now.timeIntervalSince(lastRefreshAt) > staleThreshold(for: refreshIntervalPreset)
+}
+
+func shouldHideDuplicateCCSwitchSnapshot(
+    _ snapshot: CodexSnapshot?,
+    currentSnapshot: CodexSnapshot?
+) -> Bool {
+    guard let snapshot,
+          let currentSnapshot,
+          snapshot.account.type != "apiKey",
+          currentSnapshot.account.type != "apiKey",
+          let snapshotEmail = normalizedAccountEmail(snapshot.account.email),
+          let currentEmail = normalizedAccountEmail(currentSnapshot.account.email) else {
+        return false
+    }
+
+    return snapshotEmail == currentEmail
+}
+
+func resolveProfileIndicatorKind(
+    snapshot: CodexSnapshot?,
+    health: ProfileHealthStatus
+) -> ProfileIndicatorKind {
+    guard health.isHealthy else {
+        return .error
+    }
+
+    guard let snapshot else {
+        return .neutral
+    }
+
+    if snapshot.account.type == "apiKey" {
+        return .apiKey
+    }
+
+    guard let primary = snapshot.rateLimits.primary,
+          let secondary = snapshot.rateLimits.secondary else {
+        return .neutral
+    }
+
+    if primary.remainingPercent <= 0 || secondary.remainingPercent <= 0 {
+        return .limited
+    }
+
+    let plan = (snapshot.account.planType ?? snapshot.rateLimits.planType ?? "")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+    guard !plan.isEmpty, plan != "free" else {
+        return .neutral
+    }
+
+    return .healthy
+}
+
+private func normalizedAccountEmail(_ email: String?) -> String? {
+    guard let email = email?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !email.isEmpty else {
+        return nil
+    }
+
+    return email.lowercased()
+}
+
 @MainActor
 final class AppController: NSObject, NSMenuDelegate {
     private struct CCSwitchQuotaProfile {
@@ -156,6 +248,9 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
+        guard shouldAutoRefreshWhenMenuOpens(settings.refreshIntervalPreset) else {
+            return
+        }
         refreshAllProfiles()
     }
 
@@ -353,12 +448,10 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private var isDataStale: Bool {
-        guard let interval = settings.refreshIntervalPreset.interval,
-              let lastRefreshAt else {
-            return false
-        }
-
-        return Date().timeIntervalSince(lastRefreshAt) > interval * 1.5
+        isSnapshotDataStale(
+            lastRefreshAt: lastRefreshAt,
+            refreshIntervalPreset: settings.refreshIntervalPreset
+        )
     }
 
     private func addDisabledItem(_ title: String) {
@@ -547,34 +640,18 @@ final class AppController: NSObject, NSMenuDelegate {
         snapshot: CodexSnapshot?,
         health: ProfileHealthStatus
     ) -> NSColor {
-        guard health.isHealthy else {
+        switch resolveProfileIndicatorKind(snapshot: snapshot, health: health) {
+        case .error:
             return .systemRed
-        }
-
-        guard let snapshot else {
-            return .systemRed
-        }
-
-        if snapshot.account.type == "apiKey" {
+        case .neutral:
+            return .secondaryLabelColor
+        case .apiKey:
             return .systemBlue
-        }
-
-        let plan = (snapshot.account.planType ?? snapshot.rateLimits.planType ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        guard !plan.isEmpty, plan != "free" else {
-            return .systemRed
-        }
-
-        guard let primary = snapshot.rateLimits.primary, let secondary = snapshot.rateLimits.secondary else {
-            return .systemRed
-        }
-
-        if primary.remainingPercent <= 0 || secondary.remainingPercent <= 0 {
+        case .limited:
             return .systemYellow
+        case .healthy:
+            return .systemGreen
         }
-
-        return .systemGreen
     }
 
     @objc
@@ -708,7 +785,14 @@ final class AppController: NSObject, NSMenuDelegate {
                     return completed
                 }
 
-                refreshedProfiles.append(contentsOf: batchProfiles)
+                refreshedProfiles.append(
+                    contentsOf: batchProfiles.filter {
+                        !shouldHideDuplicateCCSwitchSnapshot(
+                            $0.snapshot,
+                            currentSnapshot: self.currentSnapshot
+                        )
+                    }
+                )
                 startIndex += batchSize
             }
 
@@ -733,7 +817,7 @@ final class AppController: NSObject, NSMenuDelegate {
         _ rhs: ProfileRuntimeMaterial?
     ) -> Bool {
         guard let rhs else { return false }
-        return lhs.authData == rhs.authData && lhs.configData == rhs.configData
+        return runtimeIdentityKey(for: lhs) == runtimeIdentityKey(for: rhs)
     }
 
     private func userFacingMessage(for error: Error) -> String {
