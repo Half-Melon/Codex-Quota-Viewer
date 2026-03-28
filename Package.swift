@@ -15,7 +15,8 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "CodexQuotaViewer",
-            path: "Sources/CodexQuotaViewer"
+            path: "Sources/CodexQuotaViewer",
+            exclude: ["Resources"]
         ),
     ]
 )

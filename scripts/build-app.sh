@@ -6,6 +6,7 @@ APP_NAME="CodexQuotaViewer"
 APP_DIR="$ROOT_DIR/dist/$APP_NAME.app"
 ICONSET_DIR="$ROOT_DIR/.build/AppIcon.iconset"
 ICON_ICNS="$ROOT_DIR/.build/AppIcon.icns"
+APP_ICON_ASSETS_DIR="$APP_DIR/Contents/Resources/AppIconAssets"
 
 cd "$ROOT_DIR"
 
@@ -20,9 +21,12 @@ iconutil -c icns "$ICONSET_DIR" -o "$ICON_ICNS"
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
+mkdir -p "$APP_ICON_ASSETS_DIR"
 
 cp "$BIN_DIR/$APP_NAME" "$APP_DIR/Contents/MacOS/$APP_NAME"
 cp "$ICON_ICNS" "$APP_DIR/Contents/Resources/AppIcon.icns"
+cp "$ROOT_DIR/Sources/CodexQuotaViewer/Resources/openai-blossom-dark.svg" "$APP_ICON_ASSETS_DIR/openai-blossom-dark.svg"
+cp "$ROOT_DIR/Sources/CodexQuotaViewer/Resources/openai-blossom-light.svg" "$APP_ICON_ASSETS_DIR/openai-blossom-light.svg"
 
 cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

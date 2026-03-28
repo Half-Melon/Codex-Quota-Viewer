@@ -9,8 +9,13 @@ enum MeterIconState {
 
 struct StatusItemRenderer {
     private let brandCanvasSize = NSSize(width: 18, height: 18)
+    private let brandContentRect = NSRect(x: 1, y: 1, width: 16, height: 16)
 
-    func makeBrandImage(for _: NSAppearance) -> NSImage {
+    func makeBrandImage(for appearance: NSAppearance) -> NSImage {
+        if let sourceImage = loadOfficialBlossomSource(for: appearance) {
+            return wrapBrandImage(sourceImage)
+        }
+
         let image = NSImage(size: brandCanvasSize)
         image.lockFocus()
 
@@ -48,6 +53,62 @@ struct StatusItemRenderer {
         image.unlockFocus()
         image.isTemplate = true
         return image
+    }
+
+    private func loadOfficialBlossomSource(for appearance: NSAppearance) -> NSImage? {
+        let resourceName = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? "openai-blossom-dark"
+            : "openai-blossom-light"
+
+        guard let resourceURL = Bundle.main.resourceURL?
+            .appendingPathComponent("AppIconAssets", isDirectory: true)
+            .appendingPathComponent("\(resourceName).svg", isDirectory: false),
+              let image = NSImage(contentsOf: resourceURL) else {
+            return nil
+        }
+
+        return image
+    }
+
+    private func wrapBrandImage(_ sourceImage: NSImage) -> NSImage {
+        let image = NSImage(size: brandCanvasSize)
+        image.lockFocus()
+        NSColor.clear.setFill()
+        NSRect(origin: .zero, size: brandCanvasSize).fill()
+
+        let targetRect = aspectFitRect(for: sourceImage.size, in: brandContentRect)
+        sourceImage.draw(
+            in: targetRect,
+            from: .zero,
+            operation: .sourceOver,
+            fraction: 1
+        )
+
+        image.unlockFocus()
+        image.isTemplate = false
+        return image
+    }
+
+    private func aspectFitRect(for sourceSize: NSSize, in containerRect: NSRect) -> NSRect {
+        guard sourceSize.width > 0, sourceSize.height > 0 else {
+            return containerRect
+        }
+
+        let scale = min(
+            containerRect.width / sourceSize.width,
+            containerRect.height / sourceSize.height
+        )
+        let fittedSize = NSSize(
+            width: sourceSize.width * scale,
+            height: sourceSize.height * scale
+        )
+
+        return NSRect(
+            x: containerRect.midX - (fittedSize.width / 2),
+            y: containerRect.midY - (fittedSize.height / 2),
+            width: fittedSize.width,
+            height: fittedSize.height
+        )
     }
 
     func makeMeterImage(

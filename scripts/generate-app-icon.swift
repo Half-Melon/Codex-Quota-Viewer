@@ -9,6 +9,16 @@ let rootPath = CommandLine.arguments.count > 1
 let rootURL = URL(fileURLWithPath: rootPath, isDirectory: true)
 let iconsetURL = rootURL.appendingPathComponent(".build/AppIcon.iconset", isDirectory: true)
 let previewURL = rootURL.appendingPathComponent("dist/CodexQuotaViewer-icon-preview.png", isDirectory: false)
+let blossomURL = rootURL
+    .appendingPathComponent("Sources", isDirectory: true)
+    .appendingPathComponent("CodexQuotaViewer", isDirectory: true)
+    .appendingPathComponent("Resources", isDirectory: true)
+    .appendingPathComponent("openai-blossom-dark.svg", isDirectory: false)
+
+guard let blossomImage = NSImage(contentsOf: blossomURL) else {
+    fputs("Failed to load bundled blossom SVG.\n", stderr)
+    exit(1)
+}
 
 let fileManager = FileManager.default
 try? fileManager.removeItem(at: iconsetURL)
@@ -29,14 +39,14 @@ for entry in entries {
         ? "icon_\(entry.base)x\(entry.base).png"
         : "icon_\(entry.base)x\(entry.base)@2x.png"
     let outputURL = iconsetURL.appendingPathComponent(filename, isDirectory: false)
-    try renderIcon(size: pixelSize).writePNG(to: outputURL)
+    try renderIcon(size: pixelSize, blossomImage: blossomImage).writePNG(to: outputURL)
 }
 
-try renderIcon(size: 1024).writePNG(to: previewURL)
+try renderIcon(size: 1024, blossomImage: blossomImage).writePNG(to: previewURL)
 print(iconsetURL.lastPathComponent)
 print(previewURL.lastPathComponent)
 
-private func renderIcon(size: Int) -> NSImage {
+private func renderIcon(size: Int, blossomImage: NSImage) -> NSImage {
     let sizeValue = CGFloat(size)
     let canvasSize = NSSize(width: sizeValue, height: sizeValue)
     let image = NSImage(size: canvasSize)
@@ -50,7 +60,7 @@ private func renderIcon(size: Int) -> NSImage {
     drawBackground(in: NSRect(origin: .zero, size: canvasSize))
     drawHalo(size: sizeValue)
     let cardRect = drawFrontCard(size: sizeValue)
-    drawBlossom(in: cardRect)
+    drawBlossom(blossomImage, in: cardRect)
     drawMeters(in: cardRect)
 
     image.unlockFocus()
@@ -173,15 +183,15 @@ private func drawFrontCard(size: CGFloat) -> NSRect {
     return rect
 }
 
-private func drawBlossom(in cardRect: NSRect) {
+private func drawBlossom(_ blossomImage: NSImage, in cardRect: NSRect) {
     let rect = NSRect(
         x: cardRect.midX - cardRect.width * 0.185,
         y: cardRect.midY + cardRect.height * 0.03,
         width: cardRect.width * 0.37,
         height: cardRect.width * 0.37
     )
-    color(hex: 0xFFFFFF, alpha: 0.95).setFill()
-    brandBlobPath(in: rect).fill()
+    let target = aspectFitRect(for: blossomImage.size, in: rect)
+    blossomImage.draw(in: target, from: .zero, operation: .sourceOver, fraction: 1)
 }
 
 private func drawMeters(in cardRect: NSRect) {
@@ -230,60 +240,20 @@ private func drawMeterTrack(_ rect: NSRect, alpha: CGFloat) {
     ).fill()
 }
 
-private func brandBlobPath(in rect: NSRect) -> NSBezierPath {
-    let sourceRect = NSRect(x: 2.1, y: 4.25, width: 9.85, height: 7.95)
-    let scale = min(rect.width / sourceRect.width, rect.height / sourceRect.height)
-    let offsetX = rect.midX - ((sourceRect.minX + sourceRect.width / 2) * scale)
-    let offsetY = rect.midY - ((sourceRect.minY + sourceRect.height / 2) * scale)
-
-    func point(_ x: CGFloat, _ y: CGFloat) -> NSPoint {
-        NSPoint(x: (x * scale) + offsetX, y: (y * scale) + offsetY)
+private func aspectFitRect(for sourceSize: NSSize, in containerRect: NSRect) -> NSRect {
+    guard sourceSize.width > 0, sourceSize.height > 0 else {
+        return containerRect
     }
 
-    let path = NSBezierPath()
-    path.move(to: point(7.0, 12.0))
-    path.curve(
-        to: point(10.35, 11.2),
-        controlPoint1: point(8.2, 12.55),
-        controlPoint2: point(9.55, 12.25)
+    let scale = min(containerRect.width / sourceSize.width, containerRect.height / sourceSize.height)
+    let fittedSize = NSSize(width: sourceSize.width * scale, height: sourceSize.height * scale)
+
+    return NSRect(
+        x: containerRect.midX - fittedSize.width / 2,
+        y: containerRect.midY - fittedSize.height / 2,
+        width: fittedSize.width,
+        height: fittedSize.height
     )
-    path.curve(
-        to: point(11.95, 8.55),
-        controlPoint1: point(11.35, 10.55),
-        controlPoint2: point(12.2, 9.75)
-    )
-    path.curve(
-        to: point(10.85, 5.6),
-        controlPoint1: point(11.8, 7.3),
-        controlPoint2: point(11.55, 6.15)
-    )
-    path.curve(
-        to: point(7.95, 4.35),
-        controlPoint1: point(10.05, 5.0),
-        controlPoint2: point(8.9, 4.25)
-    )
-    path.curve(
-        to: point(4.7, 4.9),
-        controlPoint1: point(6.95, 4.35),
-        controlPoint2: point(5.5, 4.15)
-    )
-    path.curve(
-        to: point(2.1, 7.55),
-        controlPoint1: point(3.45, 5.45),
-        controlPoint2: point(2.2, 6.25)
-    )
-    path.curve(
-        to: point(3.3, 10.3),
-        controlPoint1: point(1.9, 8.85),
-        controlPoint2: point(2.1, 9.85)
-    )
-    path.curve(
-        to: point(7.0, 12.0),
-        controlPoint1: point(4.35, 11.35),
-        controlPoint2: point(5.8, 12.2)
-    )
-    path.close()
-    return path
 }
 
 private func color(hex: Int, alpha: CGFloat = 1) -> NSColor {
