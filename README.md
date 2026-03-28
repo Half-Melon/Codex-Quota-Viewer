@@ -9,6 +9,12 @@ additional Codex profiles stored by CC Switch. It is designed for people who
 want quota visibility without opening terminals, parsing JSON, or switching
 between multiple local profile stores.
 
+![Codex Quota Viewer screenshot](docs/images/menu-screenshot.png)
+
+> Screenshot with personal identifiers visually redacted. The committed image
+> asset was re-encoded locally to strip readable screenshot metadata before
+> publication.
+
 ## Highlights
 
 - **Menu bar first**: runs as a lightweight menu bar utility with no main

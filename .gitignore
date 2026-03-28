@@ -2,7 +2,10 @@
 .build/
 dist/
 .swiftpm/
-docs/
+docs/*
+!docs/images/
+docs/images/*
+!docs/images/menu-screenshot.png
 
 *.app
 *.dmg
