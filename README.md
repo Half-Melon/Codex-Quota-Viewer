@@ -11,10 +11,6 @@ between multiple local profile stores.
 
 ![Codex Quota Viewer screenshot](docs/images/menu-screenshot.png)
 
-> Screenshot with personal identifiers visually redacted. The committed image
-> asset was re-encoded locally to strip readable screenshot metadata before
-> publication.
-
 ## Highlights
 
 - **Menu bar first**: runs as a lightweight menu bar utility with no main
@@ -185,9 +181,3 @@ If you want to build the executable without packaging the app bundle, run:
 ```bash
 swift build -c release --product CodexQuotaViewer
 ```
-
-## Distribution note
-
-The build script produces an ad-hoc signed app bundle. If you plan to
-distribute the app outside your own machine, you should apply your own signing
-and notarization workflow.
