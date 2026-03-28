@@ -48,12 +48,12 @@ func apiKeyProfileDetails(authData: Data, configData: Data?) -> APIKeyProfileDet
 
 func apiKeyStatusTexts(details: APIKeyProfileDetails?) -> (String, String) {
     guard let details else {
-        return ("API Key 登录", "官方额度不可用")
+        return ("API Key", "Official quota unavailable")
     }
 
     let primary = details.providerName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         ? details.providerName!
-        : "API Key 登录"
+        : "API Key"
 
     let secondary = [
         details.model,
@@ -69,7 +69,7 @@ func apiKeyStatusTexts(details: APIKeyProfileDetails?) -> (String, String) {
     }
     .joined(separator: " · ")
 
-    return (primary, secondary.isEmpty ? "官方额度不可用" : secondary)
+    return (primary, secondary.isEmpty ? "Official quota unavailable" : secondary)
 }
 
 func runtimeIdentityKey(for runtimeMaterial: ProfileRuntimeMaterial) -> String {

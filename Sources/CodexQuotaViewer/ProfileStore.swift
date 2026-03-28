@@ -57,7 +57,7 @@ final class ProfileStore {
         } catch {
             return SettingsLoadResult(
                 settings: AppSettings(),
-                issues: [LoadIssue(message: "设置文件损坏：\(settingsURL.lastPathComponent)")]
+                issues: [LoadIssue(message: "Settings file is corrupted: \(settingsURL.lastPathComponent)")]
             )
         }
     }

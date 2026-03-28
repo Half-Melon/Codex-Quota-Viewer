@@ -10,13 +10,13 @@ enum CodexRPCError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .missingExecutable:
-            return "找不到 codex 可执行文件。"
+            return "Could not find the codex executable."
         case .timeout:
-            return "读取额度超时。"
+            return "Timed out while reading quota."
         case .notLoggedIn:
-            return "当前账号未登录或 auth.json 无效。"
+            return "The current account is not signed in, or auth.json is invalid."
         case .invalidResponse(let message):
-            return "Codex 返回了无效结果：\(message)"
+            return "Codex returned an invalid response: \(message)"
         case .rpc(let message):
             return message
         }
@@ -164,7 +164,7 @@ struct CodexRPCClient: Sendable {
             }
 
             guard let result = try await group.next() else {
-                throw CodexRPCError.invalidResponse("没有拿到任何输出。")
+                throw CodexRPCError.invalidResponse("No output was received.")
             }
 
             group.cancelAll()
@@ -204,7 +204,7 @@ struct CodexRPCClient: Sendable {
 
             if let error = message["error"] as? [String: Any] {
                 let code = error["code"] as? Int ?? 0
-                let detail = error["message"] as? String ?? "未知错误"
+                let detail = error["message"] as? String ?? "Unknown error"
                 if let fallback = fallbackRateLimitsSnapshot(
                     requestID: id,
                     errorCode: code,
@@ -231,7 +231,7 @@ struct CodexRPCClient: Sendable {
 
             case "2":
                 guard let resultObject else {
-                    throw CodexRPCError.invalidResponse("account/read 缺少 result。")
+                    throw CodexRPCError.invalidResponse("account/read is missing result.")
                 }
                 let data = try JSONSerialization.data(withJSONObject: resultObject)
                 let result = try decoder.decode(AccountReadResponse.self, from: data)
@@ -248,7 +248,7 @@ struct CodexRPCClient: Sendable {
 
             case "3":
                 guard let resultObject else {
-                    throw CodexRPCError.invalidResponse("account/rateLimits/read 缺少 result。")
+                    throw CodexRPCError.invalidResponse("account/rateLimits/read is missing result.")
                 }
                 let data = try JSONSerialization.data(withJSONObject: resultObject)
                 let result = try decoder.decode(RateLimitsReadResponse.self, from: data)
@@ -273,7 +273,7 @@ struct CodexRPCClient: Sendable {
             throw failureError
         }
 
-        throw CodexRPCError.invalidResponse("app-server 提前结束。")
+        throw CodexRPCError.invalidResponse("app-server exited early.")
     }
 
     private func sendRequest(
@@ -335,7 +335,7 @@ func codexProcessFailureError(
         }
 
         if terminationStatus != 0 {
-            return .rpc("app-server 启动失败（exit \(terminationStatus)）：\(stderrText)")
+            return .rpc("app-server failed to start (exit \(terminationStatus)): \(stderrText)")
         }
         return .rpc(stderrText)
     }
@@ -344,5 +344,5 @@ func codexProcessFailureError(
         return nil
     }
 
-    return .rpc("app-server 以退出码 \(terminationStatus) 提前结束。")
+    return .rpc("app-server exited early with status \(terminationStatus).")
 }

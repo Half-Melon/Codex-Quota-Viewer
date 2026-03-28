@@ -12,9 +12,9 @@ enum CCSwitchCodexStoreError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .sqliteUnavailable:
-            return "系统 sqlite3 不可用，无法读取 CC Switch 数据。"
+            return "System sqlite3 is unavailable, so CC Switch data cannot be read."
         case .queryFailed(let message):
-            return "读取 CC Switch 数据失败：\(message)"
+            return "Failed to read CC Switch data: \(message)"
         }
     }
 }
@@ -164,7 +164,7 @@ final class CCSwitchCodexStore {
         guard process.terminationStatus == 0 else {
             let errorText = String(data: errorData, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            throw CCSwitchCodexStoreError.queryFailed(errorText?.isEmpty == false ? errorText! : "未知错误")
+            throw CCSwitchCodexStoreError.queryFailed(errorText?.isEmpty == false ? errorText! : "Unknown error")
         }
 
         return String(data: outputData, encoding: .utf8) ?? ""

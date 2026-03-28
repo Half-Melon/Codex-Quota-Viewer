@@ -64,7 +64,7 @@ xattr -cr "$APP_DIR" 2>/dev/null || true
 if command -v codesign >/dev/null 2>&1; then
   codesign --force --deep --sign - "$APP_DIR"
 else
-  echo "warning: codesign 不可用，跳过 ad-hoc 签名。" >&2
+  echo "warning: codesign is unavailable; skipping ad-hoc signing." >&2
 fi
 
 xattr -cr "$APP_DIR" 2>/dev/null || true

@@ -59,7 +59,7 @@ func buildVisibleMenuNotices(
 
     append(statusNotice.map { MenuNotice(kind: .info, message: $0) })
     append(loadWarningNotice.map { MenuNotice(kind: .warning, message: $0) })
-    append(currentError.map { MenuNotice(kind: .error, message: "当前刷新失败：\($0)") })
+    append(currentError.map { MenuNotice(kind: .error, message: "Current account refresh failed: \($0)") })
     return notices
 }
 
@@ -104,19 +104,19 @@ func buildMenuBlueprint(
         items.append(.separator)
     }
 
-    items.append(.sectionHeader("当前账号"))
+    items.append(.sectionHeader("Current Account"))
     items.append(.currentAccount)
 
     if !ccSwitchProfileNames.isEmpty {
         items.append(.separator)
-        items.append(.sectionHeader("CC Switch 账号"))
+        items.append(.sectionHeader("CC Switch Accounts"))
         items.append(contentsOf: ccSwitchProfileNames.map(MenuBlueprintItem.ccSwitchAccount))
     }
 
     items.append(.separator)
-    items.append(.action(title: isRefreshing ? "刷新中…" : "刷新全部", isEnabled: !isRefreshing))
-    items.append(.action(title: "设置…", isEnabled: true))
-    items.append(.action(title: "退出", isEnabled: true))
+    items.append(.action(title: isRefreshing ? "Refreshing…" : "Refresh All", isEnabled: !isRefreshing))
+    items.append(.action(title: "Settings…", isEnabled: true))
+    items.append(.action(title: "Quit", isEnabled: true))
     return items
 }
 
@@ -258,7 +258,7 @@ final class AppController: NSObject, NSMenuDelegate {
         let settingsResult = store.loadSettingsResult()
         settings = settingsResult.settings
         let issues = settingsResult.issues.map(\.message)
-        loadWarningNotice = issues.isEmpty ? nil : issues.joined(separator: "；")
+        loadWarningNotice = issues.isEmpty ? nil : issues.joined(separator: "; ")
         statusNotice = nil
     }
 
@@ -361,11 +361,11 @@ final class AppController: NSObject, NSMenuDelegate {
                 menu.addItem(makeCCSwitchMenuItem(for: profile))
             case .action(let title, let isEnabled):
                 switch title {
-                case "刷新全部", "刷新中…":
+                case "Refresh All", "Refreshing…":
                     addActionItem(title: title, action: #selector(refreshTapped), enabled: isEnabled)
-                case "设置…":
+                case "Settings…":
                     addActionItem(title: title, action: #selector(openSettingsTapped), enabled: isEnabled)
-                case "退出":
+                case "Quit":
                     addActionItem(title: title, action: #selector(quitTapped), enabled: isEnabled)
                 default:
                     break
@@ -405,9 +405,9 @@ final class AppController: NSObject, NSMenuDelegate {
             if let currentSnapshot {
                 title = currentStatusSummary(for: currentSnapshot)
             } else if isRefreshing {
-                title = "刷新中"
+                title = "Refreshing"
             } else if currentError != nil {
-                title = "读取失败"
+                title = "Read failed"
             } else {
                 title = "5h- 1w-"
             }
@@ -472,7 +472,7 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private func makeCurrentAccountMenuItem() -> NSMenuItem {
-        let item = NSMenuItem(title: "当前 Codex 账号", action: nil, keyEquivalent: "")
+        let item = NSMenuItem(title: "Current Codex Account", action: nil, keyEquivalent: "")
         item.isEnabled = false
         item.view = AccountMenuRowView(model: makeCurrentAccountRowModel())
         return item
@@ -493,7 +493,7 @@ final class AppController: NSObject, NSMenuDelegate {
 
     private func currentAccountDisplayName() -> String {
         guard let currentSnapshot else {
-            return "当前账号"
+            return "Current Account"
         }
 
         if let email = currentSnapshot.account.email,
@@ -502,7 +502,7 @@ final class AppController: NSObject, NSMenuDelegate {
         }
 
         if currentSnapshot.account.type == "apiKey" {
-            return "当前账号 · API Key"
+            return "Current Account · API Key"
         }
 
         return currentSnapshot.account.displayLabel
@@ -525,9 +525,9 @@ final class AppController: NSObject, NSMenuDelegate {
                 condensedProfileErrorText(message: errorMessage, fallback: health.label)
             )
         case .refreshing:
-            return ("刷新中", "正在读取当前账号")
+            return ("Refreshing", "Loading current account")
         case .empty:
-            return ("未读取", "点“刷新全部”")
+            return ("Not loaded", "Use “Refresh All”")
         case .snapshot(let currentSnapshot):
             if currentSnapshot.account.type == "apiKey" {
                 return apiKeyStatusTexts(
@@ -624,14 +624,14 @@ final class AppController: NSObject, NSMenuDelegate {
         guard let message else { return fallback }
         let lowered = message.lowercased()
 
-        if message.contains("需要重新登录") || lowered.contains("unauthorized") || lowered.contains("sign in") {
-            return "需要重新登录"
+        if lowered.contains("unauthorized") || lowered.contains("sign in") || lowered.contains("not signed in") {
+            return "Sign in required"
         }
-        if message.contains("过期") || lowered.contains("expired") {
-            return "会话已过期"
+        if lowered.contains("expired") {
+            return "Session expired"
         }
-        if message.contains("超时") || lowered.contains("timeout") {
-            return "读取超时"
+        if lowered.contains("timeout") || lowered.contains("timed out") {
+            return "Request timed out"
         }
         return fallback
     }
@@ -720,12 +720,12 @@ final class AppController: NSObject, NSMenuDelegate {
         guard let date else { return "-" }
 
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.locale = Locale(identifier: "en_US_POSIX")
         switch style {
         case .time:
             formatter.dateFormat = "HH:mm"
         case .monthDay:
-            formatter.dateFormat = "M月d日"
+            formatter.dateFormat = "MMM d"
         }
         return formatter.string(from: date)
     }
@@ -800,7 +800,7 @@ final class AppController: NSObject, NSMenuDelegate {
             ccSwitchWarningNotice = nil
         } catch {
             ccSwitchProfiles = []
-            ccSwitchWarningNotice = "CC Switch 读取失败：\(userFacingErrorMessage(error))"
+            ccSwitchWarningNotice = "Failed to read CC Switch data: \(userFacingErrorMessage(error))"
         }
 
         rebuildMenu()

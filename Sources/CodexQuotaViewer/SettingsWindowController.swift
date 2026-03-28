@@ -8,7 +8,7 @@ final class SettingsWindowController: NSWindowController {
     private var settings: AppSettings
 
     private let refreshPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "开机自动启动", target: nil, action: nil)
+    private let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "Launch at login", target: nil, action: nil)
     private let iconStylePopup = NSPopUpButton(frame: .zero, pullsDown: false)
 
     init(settings: AppSettings) {
@@ -20,7 +20,7 @@ final class SettingsWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "设置"
+        window.title = "Settings"
         window.center()
 
         super.init(window: window)
@@ -64,8 +64,8 @@ final class SettingsWindowController: NSWindowController {
         launchAtLoginCheckbox.target = self
         launchAtLoginCheckbox.action = #selector(controlChanged)
 
-        stack.addArrangedSubview(makeRow(title: "刷新频率", control: refreshPopup))
-        stack.addArrangedSubview(makeRow(title: "菜单栏样式", control: iconStylePopup))
+        stack.addArrangedSubview(makeRow(title: "Refresh interval", control: refreshPopup))
+        stack.addArrangedSubview(makeRow(title: "Menu bar style", control: iconStylePopup))
         stack.addArrangedSubview(launchAtLoginCheckbox)
 
         contentView.addSubview(stack)

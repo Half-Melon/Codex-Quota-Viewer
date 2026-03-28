@@ -6,7 +6,7 @@ enum LaunchAtLoginError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unsupportedBundle:
-            return "当前运行环境不支持配置开机启动。请从 .app 包中启动后再试。"
+            return "Launch at login can only be configured when running from the app bundle."
         }
     }
 }

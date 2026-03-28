@@ -9,13 +9,13 @@ enum RefreshIntervalPreset: String, Codable, CaseIterable {
     var displayName: String {
         switch self {
         case .manual:
-            return "手动"
+            return "Manual"
         case .oneMinute:
-            return "1 分钟"
+            return "1 minute"
         case .fiveMinutes:
-            return "5 分钟"
+            return "5 minutes"
         case .fifteenMinutes:
-            return "15 分钟"
+            return "15 minutes"
         }
     }
 
@@ -40,9 +40,9 @@ enum StatusItemStyle: String, Codable, CaseIterable {
     var displayName: String {
         switch self {
         case .meter:
-            return "额度条"
+            return "Meter"
         case .text:
-            return "文字"
+            return "Text"
         }
     }
 }
@@ -56,13 +56,13 @@ enum ProfileHealthStatus: String, Codable, Equatable {
     var label: String {
         switch self {
         case .healthy:
-            return "正常"
+            return "Healthy"
         case .readFailure:
-            return "读取失败"
+            return "Read failed"
         case .needsLogin:
-            return "需要重新登录"
+            return "Sign in required"
         case .expired:
-            return "过期"
+            return "Expired"
         }
     }
 
@@ -140,7 +140,7 @@ extension CodexAccount {
         if let email, !email.isEmpty {
             return email
         }
-        return type == "apiKey" ? "API Key" : "未登录"
+        return type == "apiKey" ? "API Key" : "Not signed in"
     }
 }
 
