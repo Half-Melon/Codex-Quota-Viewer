@@ -181,3 +181,8 @@ If you want to build the executable without packaging the app bundle, run:
 ```bash
 swift build -c release --product CodexQuotaViewer
 ```
+
+## Distribution note
+
+The current DMG is a preview build for testing. It is not notarized for broad
+consumer distribution, and macOS may require manual approval on first launch.
