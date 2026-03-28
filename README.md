@@ -1,3 +1,5 @@
+English | [中文](README.zh-CN.md)
+
 # Codex Quota Viewer
 
 A native macOS menu bar app for monitoring local Codex account status and quota
@@ -186,3 +188,11 @@ swift build -c release --product CodexQuotaViewer
 
 The current DMG is a preview build for testing. It is not notarized for broad
 consumer distribution, and macOS may require manual approval on first launch.
+
+## Community Thanks
+
+Thank you to the [LinuxDo](https://linux.do) community for your support.
+
+LinuxDo is a welcoming place for tech discussions, AI frontiers, and practical
+AI experience sharing. Communities like it help tools such as Codex Quota
+Viewer become more useful, more understandable, and easier to improve.
