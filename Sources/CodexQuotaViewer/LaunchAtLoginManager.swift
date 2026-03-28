@@ -13,8 +13,8 @@ enum LaunchAtLoginError: LocalizedError {
 
 struct LaunchAtLoginManager {
     private let fileManager = FileManager.default
-    private let label = "com.aikris.CodexAccountSwitcher"
-    private let legacyLabel = "com.aikris.CodexQuickSwitch"
+    private let label = AppIdentity.launchAgentLabel
+    private let legacyLabels = AppIdentity.legacyLaunchAgentLabels
 
     private var plistURL: URL {
         fileManager.homeDirectoryForCurrentUser
@@ -23,11 +23,13 @@ struct LaunchAtLoginManager {
             .appendingPathComponent("\(label).plist", isDirectory: false)
     }
 
-    private var legacyPlistURL: URL {
-        fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library", isDirectory: true)
-            .appendingPathComponent("LaunchAgents", isDirectory: true)
-            .appendingPathComponent("\(legacyLabel).plist", isDirectory: false)
+    private var legacyPlistURLs: [URL] {
+        legacyLabels.map {
+            fileManager.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library", isDirectory: true)
+                .appendingPathComponent("LaunchAgents", isDirectory: true)
+                .appendingPathComponent("\($0).plist", isDirectory: false)
+        }
     }
 
     func sync(enabled: Bool) throws {
@@ -67,9 +69,11 @@ struct LaunchAtLoginManager {
         try data.write(to: plistURL, options: .atomic)
 
         let domain = "gui/\(getuid())"
-        _ = try? runLaunchctl(arguments: ["bootout", domain, legacyPlistURL.path], ignoreFailure: true)
-        if fileManager.fileExists(atPath: legacyPlistURL.path) {
-            try? fileManager.removeItem(at: legacyPlistURL)
+        for legacyPlistURL in legacyPlistURLs {
+            _ = try? runLaunchctl(arguments: ["bootout", domain, legacyPlistURL.path], ignoreFailure: true)
+            if fileManager.fileExists(atPath: legacyPlistURL.path) {
+                try? fileManager.removeItem(at: legacyPlistURL)
+            }
         }
         _ = try? runLaunchctl(arguments: ["bootout", domain, plistURL.path], ignoreFailure: true)
         try runLaunchctl(arguments: ["bootstrap", domain, plistURL.path], ignoreFailure: false)
@@ -77,11 +81,13 @@ struct LaunchAtLoginManager {
 
     private func disable() throws {
         let domain = "gui/\(getuid())"
-        _ = try? runLaunchctl(arguments: ["bootout", domain, legacyPlistURL.path], ignoreFailure: true)
-        _ = try? runLaunchctl(arguments: ["bootout", domain, plistURL.path], ignoreFailure: true)
-        if fileManager.fileExists(atPath: legacyPlistURL.path) {
-            try fileManager.removeItem(at: legacyPlistURL)
+        for legacyPlistURL in legacyPlistURLs {
+            _ = try? runLaunchctl(arguments: ["bootout", domain, legacyPlistURL.path], ignoreFailure: true)
+            if fileManager.fileExists(atPath: legacyPlistURL.path) {
+                try fileManager.removeItem(at: legacyPlistURL)
+            }
         }
+        _ = try? runLaunchctl(arguments: ["bootout", domain, plistURL.path], ignoreFailure: true)
         if fileManager.fileExists(atPath: plistURL.path) {
             try fileManager.removeItem(at: plistURL)
         }
@@ -106,7 +112,7 @@ struct LaunchAtLoginManager {
 
         if process.terminationStatus != 0 && !ignoreFailure {
             throw NSError(
-                domain: "CodexAccountSwitcher.LaunchAtLogin",
+                domain: "\(AppIdentity.packageName).LaunchAtLogin",
                 code: Int(process.terminationStatus),
                 userInfo: [NSLocalizedDescriptionKey: error.isEmpty ? output : error]
             )

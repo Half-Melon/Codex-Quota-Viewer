@@ -10,13 +10,12 @@ final class SettingsWindowController: NSWindowController {
     private let refreshPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "开机自动启动", target: nil, action: nil)
     private let iconStylePopup = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let autoOpenCheckbox = NSButton(checkboxWithTitle: "切换后自动打开 Codex 主窗口", target: nil, action: nil)
 
     init(settings: AppSettings) {
         self.settings = settings
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 220),
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 180),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -64,17 +63,10 @@ final class SettingsWindowController: NSWindowController {
 
         launchAtLoginCheckbox.target = self
         launchAtLoginCheckbox.action = #selector(controlChanged)
-        autoOpenCheckbox.target = self
-        autoOpenCheckbox.action = #selector(controlChanged)
-
-        let hint = NSTextField(labelWithString: "修改立即生效。")
-        hint.textColor = .secondaryLabelColor
 
         stack.addArrangedSubview(makeRow(title: "刷新频率", control: refreshPopup))
-        stack.addArrangedSubview(makeRow(title: "图标样式", control: iconStylePopup))
+        stack.addArrangedSubview(makeRow(title: "菜单栏样式", control: iconStylePopup))
         stack.addArrangedSubview(launchAtLoginCheckbox)
-        stack.addArrangedSubview(autoOpenCheckbox)
-        stack.addArrangedSubview(hint)
 
         contentView.addSubview(stack)
 
@@ -102,7 +94,6 @@ final class SettingsWindowController: NSWindowController {
         selectItem(in: refreshPopup, matching: settings.refreshIntervalPreset.rawValue)
         selectItem(in: iconStylePopup, matching: settings.statusItemStyle.rawValue)
         launchAtLoginCheckbox.state = settings.launchAtLoginEnabled ? .on : .off
-        autoOpenCheckbox.state = settings.autoOpenCodexAfterSwitch ? .on : .off
     }
 
     private func selectItem(in popup: NSPopUpButton, matching rawValue: String) {
@@ -124,7 +115,6 @@ final class SettingsWindowController: NSWindowController {
         }
 
         settings.launchAtLoginEnabled = launchAtLoginCheckbox.state == .on
-        settings.autoOpenCodexAfterSwitch = autoOpenCheckbox.state == .on
         onSettingsChanged?(settings)
     }
 }

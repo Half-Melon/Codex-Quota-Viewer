@@ -8,12 +8,8 @@ let rootPath = CommandLine.arguments.count > 1
     : FileManager.default.currentDirectoryPath
 let rootURL = URL(fileURLWithPath: rootPath, isDirectory: true)
 let iconsetURL = rootURL.appendingPathComponent(".build/AppIcon.iconset", isDirectory: true)
-let previewURL = rootURL.appendingPathComponent("dist/CodexAccountSwitcher-icon-preview.png", isDirectory: false)
-let blossomURL = rootURL
-    .appendingPathComponent("Sources", isDirectory: true)
-    .appendingPathComponent("CodexAccountSwitcher", isDirectory: true)
-    .appendingPathComponent("Resources", isDirectory: true)
-    .appendingPathComponent("openai-blossom-dark.svg", isDirectory: false)
+let previewURL = rootURL.appendingPathComponent("dist/CodexQuotaViewer-icon-preview.png", isDirectory: false)
+let blossomURL = findBlossomURL(rootURL: rootURL)
 
 guard let blossomImage = NSImage(contentsOf: blossomURL) else {
     fputs("Failed to load Blossom SVG at \(blossomURL.path)\n", stderr)
@@ -45,6 +41,14 @@ for entry in entries {
 try renderIcon(size: 1024, blossomImage: blossomImage).writePNG(to: previewURL)
 print(iconsetURL.path)
 print(previewURL.path)
+
+private func findBlossomURL(rootURL: URL) -> URL {
+    rootURL
+        .appendingPathComponent("Sources", isDirectory: true)
+        .appendingPathComponent("CodexQuotaViewer", isDirectory: true)
+        .appendingPathComponent("Resources", isDirectory: true)
+        .appendingPathComponent("openai-blossom-dark.svg", isDirectory: false)
+}
 
 private func renderIcon(size: Int, blossomImage: NSImage) -> NSImage {
     let sizeValue = CGFloat(size)
@@ -269,7 +273,7 @@ private extension NSImage {
               let representation = NSBitmapImageRep(data: tiffRepresentation),
               let png = representation.representation(using: .png, properties: [:]) else {
             throw NSError(
-                domain: "CodexAccountSwitcher.Icon",
+                domain: "CodexQuotaViewer.Icon",
                 code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "Failed to encode PNG"]
             )

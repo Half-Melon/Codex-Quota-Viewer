@@ -1,7 +1,6 @@
 import AppKit
 
 struct AccountMenuRowModel {
-    let profileID: UUID
     let name: String
     let primaryUsageText: String
     let secondaryUsageText: String
@@ -96,7 +95,7 @@ final class AccountMenuRowView: NSView {
         secondaryUsageField.stringValue = model.secondaryUsageText
         indicatorView.fillColor = model.indicatorColor
         nameField.font = .systemFont(ofSize: 13, weight: .regular)
-        alphaValue = model.isEnabled ? 1 : 0.48
+        alphaValue = 1
         updateAppearance()
         setAccessibilityLabel("\(model.name) \(model.primaryUsageText) \(model.secondaryUsageText)")
     }

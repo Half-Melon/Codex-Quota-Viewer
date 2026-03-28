@@ -1,19 +1,23 @@
-# Codex Account Switcher 0.1.0
+# Codex Quota Viewer 0.1.0
 
-一个极简的 macOS 菜单栏工具，用来查看多个 Codex 账号额度，并一键切换当前 `Codex.app` 使用的账号。
+一个极简的 macOS 菜单栏工具，只读查看 Codex 官方登录账号额度。
 
 ## 这版做了什么
 
-- 支持保存多个 Codex 账号
-- 支持查看每个账号的 `5h` / `1w` 剩余额度
-- 支持一键切换当前 `Codex.app` 所用账号
-- 支持通过浏览器直接添加新账号，不需要先切走当前 `Codex.app` 会话
-- 账号列表改成双行账号卡片，当前账号使用浅灰底色强调，额度列固定右对齐
-- 账号凭据改存 macOS Keychain，不再长期明文放在账号目录
-- Keychain 改为单条 bundle 存储，减少首次启动时连续弹出密码框
-- 会自动迁移旧版 `CodexQuickSwitch` 的本地数据和凭据
-- 切换失败自动回滚，避免把当前会话切坏
-- 账号或设置文件损坏时会明确提示，不再静默吞掉
+- 查看当前 `~/.codex` 账号的 `5h` / `1w` 剩余额度
+- 只读扫描 `cc-switch` 已保存的 Codex 普通登录账号并展示额度
+- API Key 登录态不显示官方 `5h` / `1w` 配额
+- 菜单状态统一为正常额度、需要重新登录、会话过期、读取失败
+- 设置只保留刷新频率、开机启动、菜单栏样式
+- 默认产物、Bundle ID、LaunchAgent label 统一为 `CodexQuotaViewer`
+- 自动迁移旧版设置目录和旧 LaunchAgent
+
+## 安全边界
+
+- 不提供账号切换
+- 不覆盖 `~/.codex/auth.json`
+- 不覆盖 `~/.codex/config.toml`
+- 不写入 `cc-switch` 数据库
 
 ## 使用前提
 
@@ -23,6 +27,6 @@
 
 ## 已知范围
 
-- 只做账号切换，不做 workspace 绑定
+- 只做只读额度查看
+- 不做 workspace 绑定
 - 不包含开发者签名、公证和安装器分发
-- 更适合本机自用

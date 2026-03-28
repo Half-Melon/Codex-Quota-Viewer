@@ -25,42 +25,91 @@ enum CodexRPCError: LocalizedError {
 
 private struct AccountReadResponse: Decodable {
     let account: CodexAccount?
-    let requiresOpenaiAuth: Bool
 }
 
 private struct RateLimitsReadResponse: Decodable {
     let rateLimits: RateLimitSnapshot
 }
 
-struct CodexRPCClient: Sendable, CodexRPCClientProtocol {
-    func fetchCurrentSnapshot() async throws -> CodexSnapshot {
-        try await fetchSnapshot(homeOverride: nil)
+func fallbackRateLimitsSnapshot(
+    requestID: String?,
+    errorCode: Int,
+    message: String
+) -> RateLimitSnapshot? {
+    guard requestID == "3", errorCode == -32600 else {
+        return nil
     }
 
-    func fetchSnapshot(authData: Data) async throws -> CodexSnapshot {
+    let normalized = message
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+
+    guard normalized.contains("chatgpt authentication required to read rate limits") else {
+        return nil
+    }
+
+    return RateLimitSnapshot(
+        limitId: nil,
+        limitName: nil,
+        primary: nil,
+        secondary: nil,
+        planType: nil
+    )
+}
+
+private func quotaUnavailableRateLimitsSnapshot() -> RateLimitSnapshot {
+    RateLimitSnapshot(
+        limitId: nil,
+        limitName: nil,
+        primary: nil,
+        secondary: nil,
+        planType: nil
+    )
+}
+
+struct CodexRPCClient: Sendable {
+    func fetchSnapshot(codexHomeURL: URL) async throws -> CodexSnapshot {
+        let homeURL = codexHomeURL.deletingLastPathComponent()
+        return try await fetchSnapshot(
+            homeOverride: homeURL,
+            codexHomeOverride: codexHomeURL
+        )
+    }
+
+    func fetchSnapshot(authData: Data, configData: Data? = nil) async throws -> CodexSnapshot {
         let fileManager = FileManager.default
         let tempHome = fileManager.temporaryDirectory
-            .appendingPathComponent("CodexAccountSwitcher-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("\(AppIdentity.temporaryDirectoryPrefix)-\(UUID().uuidString)", isDirectory: true)
+        let tempCodexHome = tempHome.appendingPathComponent(".codex", isDirectory: true)
 
         try fileManager.createDirectory(
-            at: tempHome.appendingPathComponent(".codex", isDirectory: true),
+            at: tempCodexHome,
             withIntermediateDirectories: true,
             attributes: nil
         )
 
-        let authURL = tempHome
-            .appendingPathComponent(".codex", isDirectory: true)
-            .appendingPathComponent("auth.json", isDirectory: false)
+        let authURL = tempCodexHome.appendingPathComponent("auth.json", isDirectory: false)
         try authData.write(to: authURL, options: .atomic)
+
+        if let configData {
+            let configURL = tempCodexHome.appendingPathComponent("config.toml", isDirectory: false)
+            try configData.write(to: configURL, options: .atomic)
+        }
 
         defer {
             try? fileManager.removeItem(at: tempHome)
         }
 
-        return try await fetchSnapshot(homeOverride: tempHome)
+        return try await fetchSnapshot(
+            homeOverride: tempHome,
+            codexHomeOverride: tempCodexHome
+        )
     }
 
-    private func fetchSnapshot(homeOverride: URL?) async throws -> CodexSnapshot {
+    private func fetchSnapshot(
+        homeOverride: URL?,
+        codexHomeOverride: URL?
+    ) async throws -> CodexSnapshot {
         let launch = try launchConfiguration()
 
         let process = Process()
@@ -68,8 +117,12 @@ struct CodexRPCClient: Sendable, CodexRPCClientProtocol {
         process.arguments = launch.arguments
 
         var environment = ProcessInfo.processInfo.environment
-        if let homeOverride {
-            environment["HOME"] = homeOverride.path
+        let effectiveHome = homeOverride ?? FileManager.default.homeDirectoryForCurrentUser
+        environment["HOME"] = effectiveHome.path
+        if let codexHomeOverride {
+            environment["CODEX_HOME"] = codexHomeOverride.path
+        } else {
+            environment.removeValue(forKey: "CODEX_HOME")
         }
         process.environment = environment
 
@@ -128,8 +181,8 @@ struct CodexRPCClient: Sendable, CodexRPCClientProtocol {
             method: "initialize",
             params: [
                 "clientInfo": [
-                    "name": "CodexAccountSwitcher",
-                    "version": "0.1.0",
+                    "name": AppIdentity.rpcClientName,
+                    "version": AppIdentity.rpcClientVersion,
                 ],
                 "protocolVersion": 2,
             ],
@@ -143,23 +196,34 @@ struct CodexRPCClient: Sendable, CodexRPCClientProtocol {
             guard !line.isEmpty else { continue }
 
             let message = try decodeMessage(from: line)
+            let id = message["id"] as? String
 
             if let error = message["error"] as? [String: Any] {
                 let code = error["code"] as? Int ?? 0
                 let detail = error["message"] as? String ?? "未知错误"
+                if let fallback = fallbackRateLimitsSnapshot(
+                    requestID: id,
+                    errorCode: code,
+                    message: detail
+                ) {
+                    rateLimits = fallback
+                    if let account {
+                        return CodexSnapshot(account: account, rateLimits: fallback, fetchedAt: Date())
+                    }
+                    continue
+                }
                 if code == -32600 {
                     throw CodexRPCError.notLoggedIn
                 }
                 throw CodexRPCError.rpc(detail)
             }
 
-            guard let id = message["id"] as? String else { continue }
+            guard let id else { continue }
             let resultObject = message["result"]
 
             switch id {
             case "1":
                 try sendRequest(id: "2", method: "account/read", params: [:], to: inputHandle)
-                try sendRequest(id: "3", method: "account/rateLimits/read", params: [:], to: inputHandle)
 
             case "2":
                 guard let resultObject else {
@@ -171,6 +235,12 @@ struct CodexRPCClient: Sendable, CodexRPCClientProtocol {
                     throw CodexRPCError.notLoggedIn
                 }
                 account = accountValue
+
+                if accountValue.type == "apiKey" {
+                    rateLimits = quotaUnavailableRateLimitsSnapshot()
+                } else {
+                    try sendRequest(id: "3", method: "account/rateLimits/read", params: [:], to: inputHandle)
+                }
 
             case "3":
                 guard let resultObject else {

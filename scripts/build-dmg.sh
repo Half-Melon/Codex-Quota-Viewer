@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-APP_NAME="CodexAccountSwitcher"
+APP_NAME="CodexQuotaViewer"
 APP_DIR="$ROOT_DIR/dist/$APP_NAME.app"
 DMG_STAGE_DIR="$ROOT_DIR/dist/dmg-root"
 DMG_PATH="$ROOT_DIR/dist/$APP_NAME.dmg"

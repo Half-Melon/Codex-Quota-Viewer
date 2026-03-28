@@ -1,19 +1,5 @@
 import Foundation
 
-struct CodexProfile: Codable, Identifiable, Equatable {
-    let id: UUID
-    var name: String
-    var cachedSnapshot: CachedProfileSnapshot?
-    let createdAt: Date
-    var updatedAt: Date
-}
-
-struct CachedProfileSnapshot: Codable, Equatable {
-    let account: CodexAccount
-    let rateLimits: RateLimitSnapshot
-    let fetchedAt: Date
-}
-
 enum RefreshIntervalPreset: String, Codable, CaseIterable {
     case manual
     case oneMinute
@@ -54,9 +40,9 @@ enum StatusItemStyle: String, Codable, CaseIterable {
     var displayName: String {
         switch self {
         case .meter:
-            return "双条"
+            return "额度条"
         case .text:
-            return "文本"
+            return "文字"
         }
     }
 }
@@ -85,45 +71,29 @@ enum ProfileHealthStatus: String, Codable, Equatable {
     }
 }
 
-struct AppSettings: Codable {
-    var lastActiveProfileID: UUID?
-    var storageVersion: Int
+struct AppSettings: Codable, Equatable {
     var refreshIntervalPreset: RefreshIntervalPreset
     var launchAtLoginEnabled: Bool
     var statusItemStyle: StatusItemStyle
-    var autoOpenCodexAfterSwitch: Bool
-
-    static let currentStorageVersion = 3
 
     init(
-        lastActiveProfileID: UUID?,
-        storageVersion: Int = 0,
         refreshIntervalPreset: RefreshIntervalPreset = .fiveMinutes,
         launchAtLoginEnabled: Bool = false,
-        statusItemStyle: StatusItemStyle = .meter,
-        autoOpenCodexAfterSwitch: Bool = true
+        statusItemStyle: StatusItemStyle = .meter
     ) {
-        self.lastActiveProfileID = lastActiveProfileID
-        self.storageVersion = storageVersion
         self.refreshIntervalPreset = refreshIntervalPreset
         self.launchAtLoginEnabled = launchAtLoginEnabled
         self.statusItemStyle = statusItemStyle
-        self.autoOpenCodexAfterSwitch = autoOpenCodexAfterSwitch
     }
 
     private enum CodingKeys: String, CodingKey {
-        case lastActiveProfileID
-        case storageVersion
         case refreshIntervalPreset
         case launchAtLoginEnabled
         case statusItemStyle
-        case autoOpenCodexAfterSwitch
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        lastActiveProfileID = try container.decodeIfPresent(UUID.self, forKey: .lastActiveProfileID)
-        storageVersion = try container.decodeIfPresent(Int.self, forKey: .storageVersion) ?? 0
         refreshIntervalPreset = try container.decodeIfPresent(
             RefreshIntervalPreset.self,
             forKey: .refreshIntervalPreset
@@ -136,20 +106,6 @@ struct AppSettings: Codable {
             StatusItemStyle.self,
             forKey: .statusItemStyle
         ) ?? .meter
-        autoOpenCodexAfterSwitch = try container.decodeIfPresent(
-            Bool.self,
-            forKey: .autoOpenCodexAfterSwitch
-        ) ?? true
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encodeIfPresent(lastActiveProfileID, forKey: .lastActiveProfileID)
-        try container.encode(storageVersion, forKey: .storageVersion)
-        try container.encode(refreshIntervalPreset, forKey: .refreshIntervalPreset)
-        try container.encode(launchAtLoginEnabled, forKey: .launchAtLoginEnabled)
-        try container.encode(statusItemStyle, forKey: .statusItemStyle)
-        try container.encode(autoOpenCodexAfterSwitch, forKey: .autoOpenCodexAfterSwitch)
     }
 }
 
@@ -157,12 +113,6 @@ struct CodexSnapshot: Equatable {
     let account: CodexAccount
     let rateLimits: RateLimitSnapshot
     let fetchedAt: Date
-}
-
-extension CodexSnapshot {
-    var cached: CachedProfileSnapshot {
-        CachedProfileSnapshot(account: account, rateLimits: rateLimits, fetchedAt: fetchedAt)
-    }
 }
 
 struct CodexAccount: Codable, Equatable {
@@ -188,28 +138,9 @@ struct RateLimitWindow: Codable, Equatable {
 extension CodexAccount {
     var displayLabel: String {
         if let email, !email.isEmpty {
-            if let planType, !planType.isEmpty {
-                return "\(email) · \(planType)"
-            }
             return email
         }
         return type == "apiKey" ? "API Key" : "未登录"
-    }
-
-    var normalizedEmail: String? {
-        email?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    }
-
-    func matchesIdentity(_ other: CodexAccount) -> Bool {
-        if type != other.type {
-            return false
-        }
-
-        if normalizedEmail != other.normalizedEmail {
-            return false
-        }
-
-        return planType == other.planType
     }
 }
 
@@ -228,35 +159,7 @@ extension RateLimitWindow {
     }
 }
 
-func resolveActiveProfileID(
-    lastActiveProfileID: UUID?,
-    profiles: [CodexProfile],
-    currentSnapshot: CodexSnapshot?
-) -> UUID? {
-    if let lastActiveProfileID,
-       profiles.contains(where: { $0.id == lastActiveProfileID }) {
-        return lastActiveProfileID
-    }
-
-    guard let email = currentSnapshot?.account.normalizedEmail else {
-        return nil
-    }
-
-    let matches = profiles.filter {
-        $0.cachedSnapshot?.account.normalizedEmail == email
-    }
-
-    return matches.count == 1 ? matches[0].id : nil
-}
-
 func classifyProfileHealth(from error: Error) -> ProfileHealthStatus {
-    if let credentialError = error as? CredentialStoreError {
-        switch credentialError {
-        case .itemNotFound, .invalidStoredData, .keychainError:
-            return .readFailure
-        }
-    }
-
     if let rpcError = error as? CodexRPCError {
         switch rpcError {
         case .notLoggedIn:
