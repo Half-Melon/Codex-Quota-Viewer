@@ -178,6 +178,15 @@ swift build -c release --product CodexQuotaViewer
 当前 DMG 是一个用于测试的预览版本。它还没有完成面向广泛用户分发所需的
 notarization，因此在首次启动时，macOS 可能仍然要求手动放行。
 
+## 致谢
+
+本项目通过读取
+[CC Switch](https://github.com/farion1231/cc-switch)
+管理的本地配置数据，让多账号 Codex 使用场景变得更实用。
+
+特别感谢 CC Switch 项目在本地账号切换和配置管理体验上的工作。Codex Quota
+Viewer 直接受益于它提供的工作流和生态支持。
+
 ## 社区致谢
 
 感谢 [LinuxDo](https://linux.do) 社区的支持。
