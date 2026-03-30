@@ -2,6 +2,8 @@
 .build/
 dist/
 .swiftpm/
+Vendor/CodexMM/node_modules/
+Vendor/CodexMM/dist/
 docs/*
 !docs/images/
 docs/images/*
@@ -11,6 +13,8 @@ docs/images/*
 *.dmg
 *.pkg
 *.log
+!releases/*.dmg
+!releases/*.pkg
 
 .env
 .env.*
@@ -19,6 +23,8 @@ auth.json
 *.pem
 *.key
 *.p12
+
+releases/.DS_Store
 
 main-*.js
 deeplinks-*.js

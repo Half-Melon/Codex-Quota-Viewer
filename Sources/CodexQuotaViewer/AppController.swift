@@ -95,7 +95,8 @@ func resolveCurrentAccountCardState(
 func buildMenuBlueprint(
     notices: [MenuNotice],
     ccSwitchProfileNames: [String],
-    isRefreshing: Bool
+    isRefreshing: Bool,
+    isLaunchingSessionManager: Bool
 ) -> [MenuBlueprintItem] {
     var items: [MenuBlueprintItem] = []
 
@@ -115,6 +116,12 @@ func buildMenuBlueprint(
 
     items.append(.separator)
     items.append(.action(title: isRefreshing ? "Refreshing…" : "Refresh All", isEnabled: !isRefreshing))
+    items.append(
+        .action(
+            title: isLaunchingSessionManager ? "Starting Session Manager…" : "Manage Sessions",
+            isEnabled: !isLaunchingSessionManager
+        )
+    )
     items.append(.action(title: "Settings…", isEnabled: true))
     items.append(.action(title: "Quit", isEnabled: true))
     return items
@@ -218,6 +225,7 @@ final class AppController: NSObject, NSMenuDelegate {
     private let rpcClient = CodexRPCClient()
     private let launchAtLoginManager = LaunchAtLoginManager()
     private let statusItemRenderer = StatusItemRenderer()
+    private let sessionManagerLauncher = SessionManagerLauncher()
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
@@ -230,7 +238,9 @@ final class AppController: NSObject, NSMenuDelegate {
     private var ccSwitchWarningNotice: String?
     private var statusNotice: String?
     private var loadWarningNotice: String?
+    private var sessionManagerNotice: MenuNotice?
     private var isRefreshing = false
+    private var isLaunchingSessionManager = false
     private var lastRefreshAt: Date?
     private var refreshTimer: Timer?
     private var settingsWindowController: SettingsWindowController?
@@ -339,7 +349,8 @@ final class AppController: NSObject, NSMenuDelegate {
         let blueprint = buildMenuBlueprint(
             notices: visibleMenuNotices(),
             ccSwitchProfileNames: ccSwitchProfiles.map(\.name),
-            isRefreshing: isRefreshing
+            isRefreshing: isRefreshing,
+            isLaunchingSessionManager: isLaunchingSessionManager
         )
         var ccSwitchIndex = 0
 
@@ -363,6 +374,8 @@ final class AppController: NSObject, NSMenuDelegate {
                 switch title {
                 case "Refresh All", "Refreshing…":
                     addActionItem(title: title, action: #selector(refreshTapped), enabled: isEnabled)
+                case "Manage Sessions", "Starting Session Manager…":
+                    addActionItem(title: title, action: #selector(manageSessionsTapped), enabled: isEnabled)
                 case "Settings…":
                     addActionItem(title: title, action: #selector(openSettingsTapped), enabled: isEnabled)
                 case "Quit":
@@ -380,6 +393,12 @@ final class AppController: NSObject, NSMenuDelegate {
             loadWarningNotice: loadWarningNotice,
             currentError: currentError
         )
+
+        if let sessionManagerNotice,
+           !sessionManagerNotice.message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !notices.contains(sessionManagerNotice) {
+            notices.append(sessionManagerNotice)
+        }
 
         if let ccSwitchWarningNotice,
            !ccSwitchWarningNotice.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -660,6 +679,34 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     @objc
+    private func manageSessionsTapped() {
+        guard !isLaunchingSessionManager else { return }
+
+        isLaunchingSessionManager = true
+        sessionManagerNotice = MenuNotice(kind: .info, message: "Opening session manager…")
+        rebuildMenu()
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            defer {
+                self.isLaunchingSessionManager = false
+                self.rebuildMenu()
+            }
+
+            do {
+                _ = try await self.sessionManagerLauncher.openSessionManagerInBrowser()
+                self.sessionManagerNotice = nil
+            } catch {
+                self.sessionManagerNotice = MenuNotice(
+                    kind: .error,
+                    message: self.userFacingMessage(for: error)
+                )
+            }
+        }
+    }
+
+    @objc
     private func openSettingsTapped() {
         if settingsWindowController == nil {
             let controller = SettingsWindowController(settings: settings)
@@ -822,5 +869,9 @@ final class AppController: NSObject, NSMenuDelegate {
 
     private func userFacingMessage(for error: Error) -> String {
         userFacingErrorMessage(error)
+    }
+
+    func stopSessionManagerIfNeeded() {
+        sessionManagerLauncher.stopManagedProcess()
     }
 }

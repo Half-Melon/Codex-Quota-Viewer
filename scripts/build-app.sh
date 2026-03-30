@@ -3,10 +3,13 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="CodexQuotaViewer"
+APP_VERSION="0.2.0"
+APP_BUILD="2"
 APP_DIR="$ROOT_DIR/dist/$APP_NAME.app"
 ICONSET_DIR="$ROOT_DIR/.build/AppIcon.iconset"
 ICON_ICNS="$ROOT_DIR/.build/AppIcon.icns"
 APP_ICON_ASSETS_DIR="$APP_DIR/Contents/Resources/AppIconAssets"
+SESSION_MANAGER_RESOURCES_DIR="$APP_DIR/Contents/Resources/SessionManager"
 
 cd "$ROOT_DIR"
 
@@ -27,8 +30,10 @@ cp "$BIN_DIR/$APP_NAME" "$APP_DIR/Contents/MacOS/$APP_NAME"
 cp "$ICON_ICNS" "$APP_DIR/Contents/Resources/AppIcon.icns"
 cp "$ROOT_DIR/Sources/CodexQuotaViewer/Resources/openai-blossom-dark.svg" "$APP_ICON_ASSETS_DIR/openai-blossom-dark.svg"
 cp "$ROOT_DIR/Sources/CodexQuotaViewer/Resources/openai-blossom-light.svg" "$APP_ICON_ASSETS_DIR/openai-blossom-light.svg"
+"$ROOT_DIR/scripts/build-session-manager.sh" "$SESSION_MANAGER_RESOURCES_DIR"
+strip -S -x "$APP_DIR/Contents/MacOS/$APP_NAME"
 
-cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
+cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -48,9 +53,9 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
+    <string>${APP_VERSION}</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>${APP_BUILD}</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSHighResolutionCapable</key>

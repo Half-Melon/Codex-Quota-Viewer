@@ -7,6 +7,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller = AppController()
         controller?.start()
     }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        controller?.stopSessionManagerIfNeeded()
+    }
 }
 
 let app = NSApplication.shared
