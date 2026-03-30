@@ -29,12 +29,15 @@ Node setup, or a local server command.
 - **No extra session-manager install**: `CodexQuotaViewer.app` bundles the
   session manager and its private runtime
 
-## What’s New in 0.2.1
+## What’s New in 0.3.0
 
-- fixes the session manager bug where the left project directory list could
-  stop scrolling
-- keeps the left project list and the right session detail pane independently
-  scrollable
+- fixes incomplete English session-manager localization so official sync
+  summaries, issue lists, timeline role labels, audit actions, and known
+  validation errors switch cleanly with the UI language
+- improves the bundled session-manager documentation with a refreshed
+  privacy-safe screenshot, clearer workflow guidance, and aligned bilingual
+  README updates
+- refreshes the packaged app, DMG, and release metadata for version `0.3.0`
 
 ## What You Can Do
 

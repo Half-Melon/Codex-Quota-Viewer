@@ -3,8 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="CodexQuotaViewer"
-APP_VERSION="0.2.1"
-APP_BUILD="3"
+APP_VERSION="0.3.0"
+APP_BUILD="4"
 APP_DIR="$ROOT_DIR/dist/$APP_NAME.app"
 ICONSET_DIR="$ROOT_DIR/.build/AppIcon.iconset"
 ICON_ICNS="$ROOT_DIR/.build/AppIcon.icns"
