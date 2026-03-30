@@ -29,9 +29,12 @@ Node setup, or a local server command.
 
 ## What’s New in 0.3.0
 
+- add sessions manager
 - fixes incomplete English session-manager localization so official sync
   summaries, issue lists, timeline role labels, audit actions, and known
   validation errors switch cleanly with the UI language
+
+![What's New in 0.3.0](docs/images/0.3.0-new-update.png)
 
 ## What You Can Do
 
