@@ -7,6 +7,11 @@ import type {
 } from "../../shared/contracts";
 import { useI18n } from "../i18n";
 import {
+  describeOfficialState,
+  localizeAuditAction,
+  localizeKnownMessage,
+} from "../session-browser-helpers";
+import {
   formatSessionDate,
   formatTimelineTime,
   getSessionTitle,
@@ -86,6 +91,7 @@ export function SessionDetail({
   const { copy, language } = useI18n();
   const hasSelection = checkedCount > 0;
   const sessionTitle = detail ? (getSessionTitle(detail.record) ?? detail.record.id) : null;
+  const officialStateCopy = detail ? describeOfficialState(detail.officialState, copy) : null;
   const selectionSummary = busyAction
     ? copy.detail.selectionSummaryBusy
     : hasSelection
@@ -183,7 +189,7 @@ export function SessionDetail({
             <ul className="failure-list">
               {batchFailures.map((failure) => (
                 <li key={failure.sessionId}>
-                  {failure.sessionId}：{failure.error}
+                  {failure.sessionId}: {localizeKnownMessage(failure.error, copy)}
                 </li>
               ))}
             </ul>
@@ -241,7 +247,7 @@ export function SessionDetail({
                     className={`weui-input detail-input ${restoreTargetError ? "detail-input--error" : ""}`}
                     value={targetCwd}
                     onChange={(event) => onTargetCwdChange(event.target.value)}
-                    placeholder="/path/to/project"
+                    placeholder={copy.detail.targetProjectDirectoryPlaceholder}
                   />
                   {restoreTargetError ? (
                     <span className="field-error" role="status">
@@ -308,10 +314,10 @@ export function SessionDetail({
                   <strong>{copy.detail.officialSync}</strong>
                   <span>{labelForOfficialState(detail.officialState.status, copy)}</span>
                 </div>
-                <p>{detail.officialState.summary}</p>
-                {detail.officialState.issues.length > 0 ? (
+                <p>{officialStateCopy?.summary}</p>
+                {officialStateCopy && officialStateCopy.issues.length > 0 ? (
                   <ul className="official-sync-panel__issues">
-                    {detail.officialState.issues.map((issue) => (
+                    {officialStateCopy.issues.map((issue) => (
                       <li key={issue}>{issue}</li>
                     ))}
                   </ul>
@@ -331,7 +337,7 @@ export function SessionDetail({
                 <div className="audit-inline">
                   {detail.auditEntries.slice(0, 3).map((entry) => (
                     <span key={entry.id}>
-                      {entry.action} · {formatSessionDate(entry.createdAt, language)}
+                      {localizeAuditAction(entry.action, copy)} · {formatSessionDate(entry.createdAt, language)}
                     </span>
                   ))}
                 </div>
@@ -378,7 +384,7 @@ function TimelineEntry({ item }: { item: SessionTimelineItem }) {
     return (
       <details className="thread-entry thread-entry--tool">
         <summary>
-          <span className="thread-entry__pill">tool</span>
+          <span className="thread-entry__pill">{copy.detail.toolLabel}</span>
           <strong>{item.toolName}</strong>
           <span>{item.summary}</span>
           <time>{formatTimelineTime(item.timestamp, language)}</time>
@@ -403,7 +409,7 @@ function TimelineEntry({ item }: { item: SessionTimelineItem }) {
     >
       <header className="thread-entry__header">
         <span className="thread-entry__pill">
-          {item.type === "message:user" ? "user" : "assistant"}
+          {item.type === "message:user" ? copy.detail.userLabel : copy.detail.assistantLabel}
         </span>
         <time>{formatTimelineTime(item.timestamp, language)}</time>
       </header>

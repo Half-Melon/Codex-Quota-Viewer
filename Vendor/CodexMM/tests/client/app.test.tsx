@@ -314,6 +314,14 @@ describe("App", () => {
 
     expect(screen.getByText(expectedEnglishTime)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Restore to directory" })).toBeInTheDocument();
+    expect(screen.getByText("Official Codex sync")).toBeInTheDocument();
+    expect(screen.getByText("Synced")).toBeInTheDocument();
+    expect(
+      screen.getByText("This session is synced to Official Codex threads and recent conversations."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Tool")).toBeInTheDocument();
+    expect(screen.getByText("User")).toBeInTheDocument();
+    expect(screen.getByText("Assistant")).toBeInTheDocument();
     expect(screen.getAllByText("我已经完成扫描并准备恢复。").length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole("button", { name: "中文" }));
@@ -321,7 +329,39 @@ describe("App", () => {
     expect(await screen.findByText(expectedChineseTime)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "恢复到目录" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "切换项目 /work/project-alpha" })).toBeInTheDocument();
+    expect(screen.getByText("官方 Codex 同步")).toBeInTheDocument();
+    expect(screen.getByText("已同步")).toBeInTheDocument();
+    expect(
+      screen.getByText("这条会话已经同步到官方 Codex 的 threads 和 recent conversations。"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("工具")).toBeInTheDocument();
+    expect(screen.getByText("用户")).toBeInTheDocument();
+    expect(screen.getByText("助手")).toBeInTheDocument();
     expect(screen.getAllByText("我已经完成扫描并准备恢复。").length).toBeGreaterThan(0);
+  });
+
+  test("localizes audit actions and official sync issues in English", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ sessions: [sessionBeta] }))
+      .mockResolvedValueOnce(jsonResponse(betaDetail));
+
+    renderAppWithoutLocale();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Toggle project /work/project-beta" }));
+    fireEvent.click(await screen.findByRole("button", { name: /解释一下现有会话结构/i }));
+
+    expect(await screen.findByText("Official Codex sync")).toBeInTheDocument();
+    expect(screen.getByText("Needs repair")).toBeInTheDocument();
+    expect(
+      screen.getByText("This session is not fully synced with Official Codex local thread state."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Official threads is missing this thread record.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Official recent conversations is missing this entry."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText((content) => content.startsWith("Archived · ")),
+    ).toBeInTheDocument();
   });
 
   test("starts with projects collapsed, shows human-friendly session rows, and lets users open a project to read a session", async () => {
@@ -567,7 +607,7 @@ describe("App", () => {
 
     expect(await screen.findByText("以下会话处理失败：")).toBeInTheDocument();
     expect(
-      screen.getByText("session-alpha-sibling：会话文件正在被占用，稍后再试。"),
+      screen.getByText("session-alpha-sibling: 会话文件正在被占用，稍后再试。"),
     ).toBeInTheDocument();
   });
 
@@ -632,7 +672,7 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "清空回收站" }));
 
     expect(await screen.findByText("以下会话处理失败：")).toBeInTheDocument();
-    expect(screen.getByText("session-alpha-sibling：这条会话暂时无法清理。")).toBeInTheDocument();
+    expect(screen.getByText("session-alpha-sibling: 这条会话暂时无法清理。")).toBeInTheDocument();
 
     await waitFor(() => {
       expect(screen.queryByRole("button", { name: /请帮我恢复这个项目的会话/i })).not.toBeInTheDocument();
@@ -818,6 +858,31 @@ describe("App", () => {
       await screen.findByText("目标项目目录不存在，请先创建后再恢复。"),
     ).toBeInTheDocument();
     expect(screen.queryByText(/{"error":/)).not.toBeInTheDocument();
+  });
+
+  test("localizes known server validation errors in English", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ sessions: [sessionAlpha] }))
+      .mockResolvedValueOnce(jsonResponse(alphaDetail))
+      .mockResolvedValueOnce(
+        errorResponse(400, "目标项目目录不存在，请先创建后再恢复。"),
+      );
+
+    renderAppWithoutLocale();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Toggle project /work/project-alpha" }));
+    fireEvent.click(await screen.findByRole("button", { name: /请帮我恢复这个项目的会话/i }));
+    fireEvent.change(await screen.findByLabelText("Target project directory"), {
+      target: { value: "/tmp/missing-project" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Restore to directory" }));
+
+    expect(
+      await screen.findByText(
+        "The target project directory does not exist. Create it before restoring.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("目标项目目录不存在，请先创建后再恢复。")).not.toBeInTheDocument();
   });
 
   test("debounces remote search requests through the sessions API", async () => {

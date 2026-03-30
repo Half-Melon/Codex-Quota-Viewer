@@ -7,6 +7,8 @@ export type RestoreTargetErrorKey =
   | "notDirectory"
   | "permissionDenied";
 
+export type AuditActionKey = "archive" | "delete" | "restore" | "purge";
+
 type TranslationSet = {
   languageNames: Record<UiLanguage, string>;
   topbar: {
@@ -55,6 +57,7 @@ type TranslationSet = {
     assistantSummary: string;
     emptySummary: string;
     targetProjectDirectory: string;
+    targetProjectDirectoryPlaceholder: string;
     restoreMode: string;
     resumeOnly: string;
     rebindCwd: string;
@@ -72,6 +75,21 @@ type TranslationSet = {
     noInput: string;
     output: string;
     waitingOutput: string;
+    toolLabel: string;
+    userLabel: string;
+    assistantLabel: string;
+    auditActions: Record<AuditActionKey, string>;
+    officialSummarySynced: string;
+    officialSummaryRepairNeeded: string;
+    officialSummaryHidden: string;
+    officialSummaryHiddenRepairNeeded: string;
+    officialIssueMissingThread: string;
+    officialIssueWrongRolloutPath: string;
+    officialIssueArchivedFlagMismatch: string;
+    officialIssueMissingRecentConversation: string;
+    officialIssueStaleRecentConversation: string;
+    officialIssueSnapshotThreadStillPresent: string;
+    officialIssueSnapshotRecentConversationStillPresent: string;
   };
   messages: {
     confirmTrashSelected: (count: number) => string;
@@ -90,6 +108,15 @@ type TranslationSet = {
   errors: {
     unknown: string;
     restoreTarget: Record<RestoreTargetErrorKey, string>;
+    activeSessionCannotBeArchived: string;
+    rebindRequiresTarget: string;
+    activeSessionMustBeDeletedBeforePurge: string;
+    sessionHasNoFileToDelete: string;
+    sessionIsNotRestorable: string;
+    unsupportedRestoreMode: string;
+    unknownSession: (id: string) => string;
+    managedSessionPathOutside: (label: string) => string;
+    pathOutsideManagedRoot: (candidate: string) => string;
   };
   repairFeedback: {
     alreadySynced: string;
@@ -173,6 +200,7 @@ const translations: Record<UiLanguage, TranslationSet> = {
       assistantSummary: "Assistant summary",
       emptySummary: "None",
       targetProjectDirectory: "Target project directory",
+      targetProjectDirectoryPlaceholder: "/path/to/project",
       restoreMode: "Restore mode",
       resumeOnly: "Resume only",
       rebindCwd: "Rebind cwd",
@@ -190,6 +218,35 @@ const translations: Record<UiLanguage, TranslationSet> = {
       noInput: "No input",
       output: "Output",
       waitingOutput: "Waiting for output",
+      toolLabel: "Tool",
+      userLabel: "User",
+      assistantLabel: "Assistant",
+      auditActions: {
+        archive: "Archived",
+        delete: "Moved to trash",
+        restore: "Restored",
+        purge: "Purged",
+      },
+      officialSummarySynced:
+        "This session is synced to Official Codex threads and recent conversations.",
+      officialSummaryRepairNeeded:
+        "This session is not fully synced with Official Codex local thread state.",
+      officialSummaryHidden:
+        "This session only has a snapshot backup left and is now hidden from Official Codex lists.",
+      officialSummaryHiddenRepairNeeded:
+        "This session only has a snapshot backup left and should no longer appear in Official Codex lists.",
+      officialIssueMissingThread: "Official threads is missing this thread record.",
+      officialIssueWrongRolloutPath: "Official rollout_path points to the wrong location.",
+      officialIssueArchivedFlagMismatch:
+        "Official archived flag does not match the current session state.",
+      officialIssueMissingRecentConversation:
+        "Official recent conversations is missing this entry.",
+      officialIssueStaleRecentConversation:
+        "Official recent conversations has a stale title or updated time.",
+      officialIssueSnapshotThreadStillPresent:
+        "Official threads still keeps this snapshot-only session.",
+      officialIssueSnapshotRecentConversationStillPresent:
+        "Official recent conversations still keeps this snapshot-only session.",
     },
     messages: {
       confirmTrashSelected: (count) => `Move the selected ${count} sessions to trash?`,
@@ -225,6 +282,17 @@ const translations: Record<UiLanguage, TranslationSet> = {
         permissionDenied:
           "Permission denied for the target project directory. Check the directory permissions.",
       },
+      activeSessionCannotBeArchived: "This session is not active and cannot be archived.",
+      rebindRequiresTarget: "A target project directory is required when rebinding cwd.",
+      activeSessionMustBeDeletedBeforePurge:
+        "Active sessions must be moved to trash before purge.",
+      sessionHasNoFileToDelete: "This session has no file available to move to trash.",
+      sessionIsNotRestorable: "This session is not restorable.",
+      unsupportedRestoreMode: "The restore mode is not supported. Refresh the page and try again.",
+      unknownSession: (id) => `Unknown session: ${id}`,
+      managedSessionPathOutside: (label) =>
+        `The ${label} session path is outside the managed roots. Refusing to continue.`,
+      pathOutsideManagedRoot: (candidate) => `Path is outside managed root: ${candidate}`,
     },
     repairFeedback: {
       alreadySynced:
@@ -294,6 +362,7 @@ const translations: Record<UiLanguage, TranslationSet> = {
       assistantSummary: "助手摘要",
       emptySummary: "暂无",
       targetProjectDirectory: "目标项目目录",
+      targetProjectDirectoryPlaceholder: "例如：/path/to/project",
       restoreMode: "恢复模式",
       resumeOnly: "仅用于 resume",
       rebindCwd: "永久改目录",
@@ -311,6 +380,28 @@ const translations: Record<UiLanguage, TranslationSet> = {
       noInput: "无输入",
       output: "输出",
       waitingOutput: "等待输出",
+      toolLabel: "工具",
+      userLabel: "用户",
+      assistantLabel: "助手",
+      auditActions: {
+        archive: "已归档",
+        delete: "已移到回收站",
+        restore: "已恢复",
+        purge: "已彻底清理",
+      },
+      officialSummarySynced: "这条会话已经同步到官方 Codex 的 threads 和 recent conversations。",
+      officialSummaryRepairNeeded: "这条会话在官方 Codex 的本地线程状态还没有完全同步。",
+      officialSummaryHidden: "这条会话只剩 snapshot 备份，当前已从官方 Codex 列表隐藏。",
+      officialSummaryHiddenRepairNeeded:
+        "这条会话只剩 snapshot 备份，当前不应继续出现在官方 Codex 列表中。",
+      officialIssueMissingThread: "官方 threads 缺少这条线程记录。",
+      officialIssueWrongRolloutPath: "官方 rollout_path 指向了错误位置。",
+      officialIssueArchivedFlagMismatch: "官方 archived 标记与当前状态不一致。",
+      officialIssueMissingRecentConversation: "官方 recent conversations 缺少这条索引。",
+      officialIssueStaleRecentConversation: "官方 recent conversations 的标题或更新时间过期了。",
+      officialIssueSnapshotThreadStillPresent: "官方 threads 里仍然保留了这条仅剩备份的线程。",
+      officialIssueSnapshotRecentConversationStillPresent:
+        "官方 recent 列表里仍然保留了这条仅剩备份的线程。",
     },
     messages: {
       confirmTrashSelected: (count) => `确认将选中的 ${count} 条会话移到回收站吗？`,
@@ -344,6 +435,15 @@ const translations: Record<UiLanguage, TranslationSet> = {
         notDirectory: "目标项目目录不是文件夹，请重新选择目录。",
         permissionDenied: "当前没有权限访问目标项目目录，请检查目录权限。",
       },
+      activeSessionCannotBeArchived: "这条会话当前不是活动状态，不能归档。",
+      rebindRequiresTarget: "永久改目录时必须提供目标项目目录。",
+      activeSessionMustBeDeletedBeforePurge: "活动会话必须先移到回收站，才能彻底清理。",
+      sessionHasNoFileToDelete: "这条会话当前没有可移到回收站的文件。",
+      sessionIsNotRestorable: "这条会话当前不可恢复。",
+      unsupportedRestoreMode: "不支持的恢复模式，请刷新页面后重试。",
+      unknownSession: (id) => `未知会话：${id}`,
+      managedSessionPathOutside: (label) => `会话 ${label} 文件路径超出了受管目录，已拒绝继续操作。`,
+      pathOutsideManagedRoot: (candidate) => `路径超出了受管目录：${candidate}`,
     },
     repairFeedback: {
       alreadySynced: "官方 Codex 的 threads 和 recent conversations 已经是最新状态。",

@@ -2,53 +2,154 @@ English | [中文](README.zh-CN.md)
 
 # Codex Quota Viewer
 
-A native macOS menu bar app for monitoring local Codex account status and quota
-usage.
+A native macOS menu bar app for checking Codex quota and managing local Codex
+sessions without touching the terminal.
 
-Codex Quota Viewer gives you a fast, desktop-native way to check the account
-currently used by Codex, inspect short-window and weekly quota usage, and see
-additional Codex profiles stored by CC Switch. It is designed for people who
-want quota visibility without opening terminals, parsing JSON, or switching
-between multiple local profile stores.
+Codex Quota Viewer is built for people who want two things in one place:
 
-![Codex Quota Viewer screenshot](docs/images/menu-screenshot.png)
+- fast visibility into the Codex account currently active on the machine
+- a practical way to browse, restore, archive, and repair local Codex sessions
 
-## Highlights
+It stays lightweight, runs from the menu bar, and bundles the session manager
+inside the app so end users do not need a separate CodexMM checkout, a manual
+Node setup, or a local server command.
 
-- **Menu bar first**: runs as a lightweight menu bar utility with no main
-  window and no Dock presence
-- **Current account awareness**: reads the active local Codex profile and shows
-  its status immediately
-- **Quota visibility**: displays short-window and weekly usage for standard
-  Codex logins
-- **API key aware**: detects API key profiles and shows provider details when
-  official Codex quota data is unavailable
-- **CC Switch integration**: discovers additional local Codex profiles from
-  CC Switch
-- **Bundled session manager**: opens the CodexMM web console from the menu
-  bar and starts it automatically when needed
-- **Practical controls**: supports manual refresh, scheduled refresh, text or
-  meter display, and launch at login
+![Codex Quota Viewer product screenshot](docs/images/readme-screenshot.png)
 
-## Version 0.2.1
+## Why Codex Quota Viewer
 
-This release fixes the session manager sidebar so the left project directory
-list scrolls independently from the right detail pane.
+- **Menu bar first**: check Codex status without keeping a full desktop app
+  open
+- **Quota visibility**: see short-window and weekly usage for the current Codex
+  login
+- **Multi-account awareness**: compare the current account with CC Switch
+  accounts stored on the same Mac
+- **Built-in session management**: open a local web console for Codex sessions
+  straight from the menu bar
+- **No extra session-manager install**: `CodexQuotaViewer.app` bundles the
+  session manager and its private runtime
 
-- fixes the bug where the left project directory list could stop scrolling
-- preserves independent scrolling for both the left project list and the right
-  session detail pane
+## What’s New in 0.2.1
 
-## Version 0.2.0
+- fixes the session manager bug where the left project directory list could
+  stop scrolling
+- keeps the left project list and the right session detail pane independently
+  scrollable
 
-This release turns Codex Quota Viewer into a single-download desktop package
-for both quota viewing and session management.
+## What You Can Do
 
-- adds a new **Manage Sessions** menu action
-- bundles CodexMM inside `CodexQuotaViewer.app`
-- starts the local session manager automatically on demand and opens the web UI
-- packages a private Node runtime so end users do not need to install CodexMM
-  or Node separately
+### Quota Viewer
+
+Use the menu bar app to:
+
+- inspect the Codex account currently represented by `~/.codex/auth.json`
+- see `5h` and `1w` quota windows for standard Codex logins
+- detect API-key-based profiles and show provider metadata when quota data is
+  unavailable
+- compare additional Codex accounts discovered from CC Switch
+- refresh account data on demand
+- switch the menu bar display between a compact meter and a text summary
+
+![Codex Quota Viewer menu screenshot](docs/images/menu-screenshot.png)
+
+### Session Manager
+
+Use **Manage Sessions** to open a bundled local web console where you can:
+
+- browse sessions grouped by project directory
+- filter sessions by `Active`, `Archived`, and `Trash`
+- search by session title, path, and excerpts
+- inspect summaries, timestamps, line counts, event counts, and tool calls
+- read the full thread timeline
+- restore a session to a Codex-recognized location
+- choose between **Resume only** and **Rebind cwd** restore modes
+- archive the currently selected session
+- move sessions to trash, restore them, and empty trash
+- batch-select sessions and run archive, trash, restore, and purge actions
+- repair official Codex thread metadata when local thread visibility drifts
+
+## Session Manager
+
+The bundled session manager is the feature that turns Codex Quota Viewer from a
+quota-only utility into a full local Codex desktop companion.
+
+From the menu bar, click **Manage Sessions**. The app then:
+
+- checks whether the local session manager is already healthy on
+  `http://127.0.0.1:4318`
+- reuses the running service when it already exists
+- otherwise starts the bundled service from inside `CodexQuotaViewer.app`
+- opens the web console in your default browser once the health check succeeds
+
+This web console is local-only. It serves on `127.0.0.1`, manages local
+`~/.codex` session files, and does not require you to install CodexMM or Node
+separately.
+
+![Session Manager screenshot (privacy-safe)](docs/images/session-manager-screenshot.png)
+
+### Typical workflow
+
+1. Open `CodexQuotaViewer.app` and click the menu bar item.
+2. Choose **Manage Sessions**.
+3. Pick a project from the left sidebar.
+4. Select the session you want to inspect.
+5. Review the summary cards, timeline, and official sync status.
+6. Choose **Resume only** if you want to keep the original binding, or
+   **Rebind cwd** if you want the session to point at a new working directory.
+7. Use **Restore to directory**, **Archive current**, **Repair this thread**,
+   or the batch actions depending on the job you need done.
+
+### What the restore modes mean
+
+- **Resume only**: restore the session so Codex can recognize it again without
+  changing its working-directory binding
+- **Rebind cwd**: restore the session and permanently point it at a different
+  project directory
+
+### What “Repair official threads” is for
+
+If a local session no longer appears correctly in official Codex thread state
+or recent-conversation metadata, the repair actions can rebuild that linkage
+from your local session data. This is useful when a session exists on disk but
+has drifted out of sync with the official local thread index.
+
+## Quick Start
+
+### Install the packaged app
+
+1. Download the latest DMG from the
+   [Releases](https://github.com/Half-Melon/Codex-Quota-Viewer/releases) page.
+2. Drag `CodexQuotaViewer.app` into `/Applications`.
+3. Open the app and allow it through macOS if Gatekeeper asks for confirmation.
+4. Click the new menu bar item to see your current Codex account and quota.
+
+### Start using session management
+
+1. Open the menu bar item.
+2. Click **Manage Sessions**.
+3. Wait for the browser page to open if the bundled service needs to start.
+4. Manage sessions from the local web console.
+
+## How Session Management Works
+
+The session manager ships inside the packaged app at:
+
+```text
+CodexQuotaViewer.app/Contents/Resources/SessionManager/
+```
+
+That bundled directory contains everything needed to run the local web console:
+
+- the vendored CodexMM production build
+- production `node_modules`
+- a private Node runtime copied into the app during packaging
+
+For end users, the important part is simple:
+
+- the packaged `.app` is the distribution unit
+- you do not need to clone CodexMM
+- you do not need to install Node just to use **Manage Sessions**
+- the browser UI is still a local web app, not an embedded native long list
 
 ## Requirements
 
@@ -62,138 +163,12 @@ Optional:
 
 - CC Switch with a local database at `~/.cc-switch/cc-switch.db`
 
-## Quick start
+## Privacy and Local Data
 
-### Build the app bundle
+Codex Quota Viewer is designed for local desktop use. It reads data that is
+already on your machine and does not ask you to paste credentials into the UI.
 
-Run:
-
-```bash
-./scripts/build-app.sh
-```
-
-`build-app.sh` builds the native Swift app and the bundled session manager in
-one pass. To package the full `.app` from source, the build machine needs:
-
-- Swift
-- `node`
-- `npm`
-
-This creates:
-
-```text
-dist/CodexQuotaViewer.app
-```
-
-### Launch the app
-
-Open `dist/CodexQuotaViewer.app`.
-
-Codex Quota Viewer runs as a menu bar app. After launch, it places a status
-item in the macOS menu bar instead of opening a standard window.
-
-### Check your account
-
-Open the menu bar item to view:
-
-- **Current Account**
-- **CC Switch Accounts**, when available
-- **Refresh All**
-- **Manage Sessions**
-- **Settings**
-
-## Session Manager
-
-Codex Quota Viewer now bundles the CodexMM session manager inside the packaged
-app. End users do not need a separate CodexMM checkout, a standalone server
-launch, or a system-wide Node installation.
-
-When you click **Manage Sessions** in the menu bar:
-
-- if `http://127.0.0.1:4318/api/health` is already healthy, the app opens
-  `http://127.0.0.1:4318` in the default browser
-- if the service is not running, the app starts the bundled session manager,
-  waits for health to succeed, and then opens the browser
-
-The packaged app stores the bundled runtime here:
-
-```text
-CodexQuotaViewer.app/Contents/Resources/SessionManager/
-```
-
-That resource directory includes:
-
-- the vendored CodexMM production build (`dist/server` and `dist/client`)
-- production `node_modules`, including `better-sqlite3`
-- a private Node runtime copied into the app during packaging
-
-Runtime notes:
-
-- the session manager still manages local `~/.codex` session files
-- its local index, snapshots, and audit data are still stored in
-  `~/.codex-session-manager`
-- the standalone executable from `swift build` does not include these bundled
-  resources, so **Manage Sessions** is intended for the packaged `.app`
-
-## What the app shows
-
-### Current Account
-
-This section reflects the Codex profile currently represented by:
-
-```text
-~/.codex/auth.json
-```
-
-For standard Codex logins, the app shows two usage windows:
-
-- `5h`: the short-window quota summary
-- `1w`: the weekly quota summary
-
-For API key profiles, Codex Quota Viewer does not invent quota data. Instead,
-it shows the best local metadata it can infer, such as:
-
-- provider name
-- model
-- provider host
-- masked key suffix
-
-### CC Switch Accounts
-
-If CC Switch is installed and has stored Codex profiles locally, the app lists
-those accounts in the same menu for quick comparison.
-
-CC Switch entries are intentionally limited to ordinary Codex logins. API
-key-only CC Switch profiles are excluded from the additional account list.
-
-### Menu bar display
-
-You can choose between two display styles:
-
-- **Meter**: a compact visual indicator for remaining quota
-- **Text**: a textual summary such as `5h82% 1w64%`
-
-## Settings
-
-Codex Quota Viewer includes three user-facing settings:
-
-- **Refresh interval**: Manual, 1 minute, 5 minutes, or 15 minutes
-- **Menu bar style**: Meter or Text
-- **Launch at login**: available when the app is launched from the packaged
-  `.app`
-
-Settings are stored locally at:
-
-```text
-~/Library/Application Support/CodexQuotaViewer/settings.json
-```
-
-## Privacy and local data
-
-Codex Quota Viewer is designed for local desktop use. It reads data already
-present on your machine and does not ask you to paste credentials into the UI.
-
-The app reads from these local sources when available:
+The app may read these local sources when available:
 
 - `~/.codex/auth.json`
 - `~/.codex/config.toml`
@@ -201,12 +176,18 @@ The app reads from these local sources when available:
 - `~/.codex/sessions/**/*.jsonl`
 - `~/.codex/archived_sessions/**/*.jsonl`
 
-To fetch account state, the app starts your local Codex installation in
-`app-server` mode. It does not rely on a separate hosted backend operated by
-this project.
+For quota reading, the app talks to your local Codex installation in
+`app-server` mode.
 
-For session management, the bundled CodexMM service reads local session files
-and serves its web UI only on `127.0.0.1`.
+For session management:
+
+- the bundled service reads local `~/.codex` session files
+- local index, snapshot, and audit data remain in `~/.codex-session-manager`
+- the web UI is only served on `127.0.0.1`
+
+The session manager screenshot included in this README is a privacy-safe export
+derived from a real UI capture. Local path fragments and metadata were removed
+before it was added to the repository.
 
 ## Troubleshooting
 
@@ -231,7 +212,8 @@ normally on the machine.
 ### “Launch at login can only be configured when running from the app bundle.”
 
 Launch at login only works when the app is started from the packaged `.app`.
-It does not work when running the executable directly from a Swift build output.
+It does not work when running the executable directly from a Swift build
+output.
 
 ### “Bundled session manager is missing. Rebuild CodexQuotaViewer.app.”
 
@@ -247,8 +229,8 @@ Then launch `dist/CodexQuotaViewer.app`, not just the bare executable.
 ### “Session manager could not start because port 4318 is already in use.”
 
 Another local process is already listening on port `4318`. If it is an
-existing session manager instance, you can use that running service directly.
-If it is unrelated, stop it before using **Manage Sessions** from the app.
+existing session manager instance, Codex Quota Viewer can reuse it. If it is
+unrelated, stop it before using **Manage Sessions** from the app.
 
 ### “Failed to read CC Switch data.”
 
@@ -258,12 +240,25 @@ Check that:
 - `~/.cc-switch/cc-switch.db` exists
 - `/usr/bin/sqlite3` is available on your system
 
-If any of those are missing, Codex Quota Viewer still works for the current
-Codex account, but CC Switch accounts will not appear.
+If one of these is missing, Codex Quota Viewer can still show the current
+Codex account, but it will not list CC Switch accounts.
 
-## Build from source
+## Build from Source
 
-If you want to build the executable without packaging the app bundle, run:
+To build the full packaged app, run:
+
+```bash
+./scripts/build-app.sh
+```
+
+This builds the native Swift menu bar app and the bundled session manager in
+one pass, producing:
+
+```text
+dist/CodexQuotaViewer.app
+```
+
+To build only the standalone executable, run:
 
 ```bash
 swift build -c release --product CodexQuotaViewer
