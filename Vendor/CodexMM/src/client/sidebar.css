@@ -154,6 +154,7 @@
 }
 
 .project-group {
+  flex: 0 0 auto;
   border: 1px solid var(--line);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.02);
