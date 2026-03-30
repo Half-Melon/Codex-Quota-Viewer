@@ -33,6 +33,7 @@ Node setup, or a local server command.
 - fixes incomplete English session-manager localization so official sync
   summaries, issue lists, timeline role labels, audit actions, and known
   validation errors switch cleanly with the UI language
+- For a lightweight experience without session management, download v0.1.0—a standalone version dedicated solely to monitoring your Codex quota.
 
 ![What's New in 0.3.0](docs/images/0.3.0-new-update.png)
 
