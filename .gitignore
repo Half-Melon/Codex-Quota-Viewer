@@ -13,8 +13,6 @@ docs/images/*
 *.dmg
 *.pkg
 *.log
-!releases/*.dmg
-!releases/*.pkg
 
 .env
 .env.*
@@ -25,6 +23,7 @@ auth.json
 *.p12
 
 releases/.DS_Store
+releases/*.sha256
 
 main-*.js
 deeplinks-*.js
