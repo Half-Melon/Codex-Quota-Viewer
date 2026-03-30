@@ -82,7 +82,7 @@ This web console is local-only. It serves on `127.0.0.1`, manages local
 `~/.codex` session files, and does not require you to install CodexMM or Node
 separately.
 
-![Session Manager screenshot (privacy-safe)](docs/images/session-manager-screenshot.png)
+![Session Manager screenshot](docs/images/session-manager-screenshot.png)
 
 ### Typical workflow
 
