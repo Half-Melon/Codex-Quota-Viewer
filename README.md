@@ -30,6 +30,15 @@ between multiple local profile stores.
 - **Practical controls**: supports manual refresh, scheduled refresh, text or
   meter display, and launch at login
 
+## Version 0.2.1
+
+This release fixes the session manager sidebar so the left project directory
+list scrolls independently from the right detail pane.
+
+- fixes the bug where the left project directory list could stop scrolling
+- preserves independent scrolling for both the left project list and the right
+  session detail pane
+
 ## Version 0.2.0
 
 This release turns Codex Quota Viewer into a single-download desktop package
