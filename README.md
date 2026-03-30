@@ -14,8 +14,6 @@ It stays lightweight, runs from the menu bar, and bundles the session manager
 inside the app so end users do not need a separate CodexMM checkout, a manual
 Node setup, or a local server command.
 
-![Codex Quota Viewer product screenshot](docs/images/readme-screenshot.png)
-
 ## Why Codex Quota Viewer
 
 - **Menu bar first**: check Codex status without keeping a full desktop app
@@ -34,10 +32,6 @@ Node setup, or a local server command.
 - fixes incomplete English session-manager localization so official sync
   summaries, issue lists, timeline role labels, audit actions, and known
   validation errors switch cleanly with the UI language
-- improves the bundled session-manager documentation with a refreshed
-  privacy-safe screenshot, clearer workflow guidance, and aligned bilingual
-  README updates
-- refreshes the packaged app, DMG, and release metadata for version `0.3.0`
 
 ## What You Can Do
 
