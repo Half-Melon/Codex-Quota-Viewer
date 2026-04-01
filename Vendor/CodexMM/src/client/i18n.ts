@@ -136,11 +136,9 @@ export type I18nValue = {
   language: UiLanguage;
   locale: string;
   copy: TranslationSet;
-  setLanguage: (language: UiLanguage) => void;
 };
 
 export const DEFAULT_LANGUAGE: UiLanguage = "en";
-export const LOCALE_STORAGE_KEY = "codex-session-manager.locale";
 
 const LOCALE_BY_LANGUAGE: Record<UiLanguage, string> = {
   en: "en-US",
@@ -472,19 +470,6 @@ export function resolveLocale(language: UiLanguage) {
 
 export function isUiLanguage(value: string | null | undefined): value is UiLanguage {
   return value === "en" || value === "zh";
-}
-
-export function readStoredLanguage() {
-  if (typeof window === "undefined") {
-    return DEFAULT_LANGUAGE;
-  }
-
-  try {
-    const storedLanguage = window.localStorage.getItem(LOCALE_STORAGE_KEY);
-    return isUiLanguage(storedLanguage) ? storedLanguage : DEFAULT_LANGUAGE;
-  } catch {
-    return DEFAULT_LANGUAGE;
-  }
 }
 
 export function useI18n() {

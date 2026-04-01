@@ -6,6 +6,7 @@ import type {
   SessionFilters,
   SessionRecord,
   SessionTimelinePage,
+  UiConfigResponse,
 } from "../shared/contracts";
 
 export async function rescanSessions() {
@@ -105,6 +106,11 @@ export async function repairOfficialThreads(sessionIds: string[] = []) {
   });
 
   return parseJson<OfficialRepairResponse>(response);
+}
+
+export async function fetchUiConfig() {
+  const response = await fetch("/api/ui-config");
+  return parseJson<UiConfigResponse>(response);
 }
 
 async function parseJson<T>(response: Response): Promise<T> {

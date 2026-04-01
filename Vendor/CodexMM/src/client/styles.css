@@ -137,41 +137,6 @@ input::placeholder {
   color: var(--text-secondary);
 }
 
-.app-language-switcher {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
-  padding: 4px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.app-language-button {
-  min-height: 30px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition:
-    background 140ms ease,
-    color 140ms ease;
-}
-
-.app-language-button:hover {
-  color: var(--text);
-}
-
-.app-language-button--active {
-  background: rgba(151, 168, 191, 0.16);
-  color: var(--text);
-}
-
 .app-banner,
 .empty-state,
 .failure-panel {
@@ -336,10 +301,6 @@ input::placeholder {
 
   .app-topbar {
     align-items: flex-start;
-  }
-
-  .app-language-switcher {
-    margin-left: 0;
   }
 
   .app-workspace {

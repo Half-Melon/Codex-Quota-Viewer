@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
   BatchSessionActionFailure,
@@ -17,6 +17,7 @@ import {
   batchTrashSessions,
   fetchSessionDetail,
   fetchSessionTimelinePage,
+  fetchUiConfig,
   listSessions,
   repairOfficialThreads,
   rescanSessions,
@@ -35,10 +36,10 @@ import {
 import { SessionDetail as SessionReader } from "./components/SessionDetail";
 import { SessionList } from "./components/SessionList";
 import {
+  DEFAULT_LANGUAGE,
   I18nContext,
-  LOCALE_STORAGE_KEY,
   getTranslation,
-  readStoredLanguage,
+  isUiLanguage,
   resolveLocale,
   type UiLanguage,
 } from "./i18n";
@@ -47,8 +48,16 @@ const DEFAULT_STATUS: SessionStatus = "active";
 const FILTER_DEBOUNCE_MS = 200;
 const MOBILE_BREAKPOINT_QUERY = "(max-width: 767px)";
 
+declare global {
+  interface Window {
+    __CODEX_VIEWER_UI_CONFIG__?: {
+      language?: UiLanguage;
+    };
+  }
+}
+
 export default function App() {
-  const [language, setLanguageState] = useState<UiLanguage>(() => readStoredLanguage());
+  const [language, setLanguageState] = useState<UiLanguage>(() => readInjectedLanguage());
   const [indexedSessions, setIndexedSessions] = useState<SessionRecord[]>([]);
   const [listedSessions, setListedSessions] = useState<SessionRecord[]>([]);
   const [focusedSessionId, setFocusedSessionId] = useState<string | null>(null);
@@ -74,6 +83,13 @@ export default function App() {
   const [showMobileList, setShowMobileList] = useState(() =>
     readMediaQueryMatch(MOBILE_BREAKPOINT_QUERY),
   );
+  const locale = resolveLocale(language);
+  const copy = getTranslation(language);
+  const i18nValue = {
+    language,
+    locale,
+    copy,
+  };
 
   const listRequestSequenceRef = useRef(0);
   const detailRequestSequenceRef = useRef(0);
@@ -82,12 +98,85 @@ export default function App() {
     async () => {},
   );
 
+  const reloadUiLanguage = useCallback(async () => {
+    try {
+      const uiConfig = await fetchUiConfig();
+      if (isUiLanguage(uiConfig.language)) {
+        setLanguageState(uiConfig.language);
+      }
+    } catch {
+      // Keep the current language if the config endpoint is temporarily unavailable.
+    }
+  }, []);
+
+  const loadListedSessions = useCallback(async (filters: SessionFilters) => {
+    const requestId = ++listRequestSequenceRef.current;
+
+    setLoadingSessions(true);
+    setError(null);
+
+    try {
+      const response = await listSessions(filters);
+
+      if (listRequestSequenceRef.current !== requestId) {
+        return;
+      }
+
+      setListedSessions(response.sessions);
+      setIndexedSessions((current) =>
+        mergeSessionList(
+          current,
+          new Map(response.sessions.map((record) => [record.id, record])),
+        ),
+      );
+    } catch (loadError) {
+      if (listRequestSequenceRef.current !== requestId) {
+        return;
+      }
+
+      setError(readError(loadError, copy));
+    } finally {
+      if (listRequestSequenceRef.current === requestId) {
+        setLoadingSessions(false);
+      }
+    }
+  }, [copy]);
+
   loadInitialIndexRef.current = loadInitialIndex;
   loadDetailRef.current = loadDetail;
 
   useEffect(() => {
     void loadInitialIndexRef.current();
   }, []);
+
+  useEffect(() => {
+    if (!isUiLanguage(window.__CODEX_VIEWER_UI_CONFIG__?.language)) {
+      void reloadUiLanguage();
+    }
+  }, [reloadUiLanguage]);
+
+  useEffect(() => {
+    const refreshUiLanguage = () => {
+      void reloadUiLanguage();
+    };
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        void reloadUiLanguage();
+      }
+    };
+
+    window.addEventListener("focus", refreshUiLanguage);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("focus", refreshUiLanguage);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [reloadUiLanguage]);
+
+  useEffect(() => {
+    document.documentElement.lang = language === "zh" ? "zh-CN" : "en-US";
+  }, [language]);
 
   useEffect(() => {
     if (!hasLoadedInitialIndex) {
@@ -121,7 +210,7 @@ export default function App() {
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [hasLoadedInitialIndex, search, status]);
+  }, [hasLoadedInitialIndex, loadListedSessions, search, status]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia(MOBILE_BREAKPOINT_QUERY);
@@ -220,15 +309,6 @@ export default function App() {
   const canArchiveCurrent = currentRecord?.status === "active";
   const shouldRenderSidebar = !isNarrowViewport || showMobileList;
   const shouldRenderDetail = !isNarrowViewport || !showMobileList;
-  const locale = resolveLocale(language);
-  const copy = getTranslation(language);
-  const i18nValue = {
-    language,
-    locale,
-    copy,
-    setLanguage,
-  };
-
   return (
     <I18nContext.Provider value={i18nValue}>
       <main className="app-shell">
@@ -250,27 +330,6 @@ export default function App() {
                   .length,
               )}
             </span>
-          </div>
-          <div
-            className="app-language-switcher"
-            role="group"
-            aria-label={copy.topbar.languageLabel}
-          >
-            {(["en", "zh"] as UiLanguage[]).map((nextLanguage) => {
-              const isActive = language === nextLanguage;
-
-              return (
-                <button
-                  key={nextLanguage}
-                  type="button"
-                  className={`app-language-button ${isActive ? "app-language-button--active" : ""}`}
-                  aria-pressed={isActive}
-                  onClick={() => setLanguage(nextLanguage)}
-                >
-                  {copy.languageNames[nextLanguage]}
-                </button>
-              );
-            })}
           </div>
         </header>
 
@@ -354,16 +413,6 @@ export default function App() {
     </I18nContext.Provider>
   );
 
-  function setLanguage(nextLanguage: UiLanguage) {
-    setLanguageState(nextLanguage);
-
-    try {
-      window.localStorage.setItem(LOCALE_STORAGE_KEY, nextLanguage);
-    } catch {
-      // Ignore localStorage write failures and keep the in-memory preference.
-    }
-  }
-
   async function loadInitialIndex() {
     const requestId = ++listRequestSequenceRef.current;
 
@@ -383,39 +432,6 @@ export default function App() {
       setResumeCommand(null);
       setFeedback(null);
       setBatchFailures([]);
-    } catch (loadError) {
-      if (listRequestSequenceRef.current !== requestId) {
-        return;
-      }
-
-      setError(readError(loadError, copy));
-    } finally {
-      if (listRequestSequenceRef.current === requestId) {
-        setLoadingSessions(false);
-      }
-    }
-  }
-
-  async function loadListedSessions(filters: SessionFilters) {
-    const requestId = ++listRequestSequenceRef.current;
-
-    setLoadingSessions(true);
-    setError(null);
-
-    try {
-      const response = await listSessions(filters);
-
-      if (listRequestSequenceRef.current !== requestId) {
-        return;
-      }
-
-      setListedSessions(response.sessions);
-      setIndexedSessions((current) =>
-        mergeSessionList(
-          current,
-          new Map(response.sessions.map((record) => [record.id, record])),
-        ),
-      );
     } catch (loadError) {
       if (listRequestSequenceRef.current !== requestId) {
         return;
@@ -762,4 +778,13 @@ function confirmAction(message: string) {
       return false;
     }
   }
+}
+
+function readInjectedLanguage(): UiLanguage {
+  if (typeof window === "undefined") {
+    return DEFAULT_LANGUAGE;
+  }
+
+  const injectedLanguage = window.__CODEX_VIEWER_UI_CONFIG__?.language;
+  return isUiLanguage(injectedLanguage) ? injectedLanguage : DEFAULT_LANGUAGE;
 }

@@ -125,3 +125,7 @@ export type OfficialRepairResponse = {
   sessions: SessionRecord[];
   stats: OfficialRepairStats;
 };
+
+export type UiConfigResponse = {
+  language: "en" | "zh";
+};

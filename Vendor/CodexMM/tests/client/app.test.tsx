@@ -6,8 +6,6 @@ import App from "../../src/client/App";
 
 type UiLanguage = "en" | "zh";
 
-const LOCALE_STORAGE_KEY = "codex-session-manager.locale";
-
 const syncedOfficialState = {
   status: "synced" as const,
   canAppearInCodex: true,
@@ -227,7 +225,7 @@ describe("App", () => {
 
   beforeEach(() => {
     isNarrowViewport = false;
-    window.localStorage.clear();
+    window.__CODEX_VIEWER_UI_CONFIG__ = { language: "zh" };
     vi.stubGlobal("fetch", fetchMock);
     vi.stubGlobal("confirm", confirmMock);
     vi.stubGlobal(
@@ -251,14 +249,14 @@ describe("App", () => {
   });
 
   afterEach(() => {
-    window.localStorage.clear();
+    delete window.__CODEX_VIEWER_UI_CONFIG__;
     vi.unstubAllGlobals();
     fetchMock.mockReset();
     clipboardWriteText.mockReset();
     confirmMock.mockReset();
   });
 
-  test("defaults to English and persists the selected locale after switching", async () => {
+  test("uses the injected global language on first render", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ sessions: [sessionAlpha, sessionBeta] }));
 
     const firstView = renderAppWithoutLocale();
@@ -267,24 +265,16 @@ describe("App", () => {
     expect(screen.getByText("2 indexed")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Active" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Repair official threads" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "English" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("textbox", { name: "Search sessions, paths, or excerpts" })).toBeInTheDocument();
-    expect(window.localStorage.getItem(LOCALE_STORAGE_KEY)).toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: "中文" }));
-
-    expect(await screen.findByText("Codex 会话")).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "活动" })).toBeInTheDocument();
-    expect(window.localStorage.getItem(LOCALE_STORAGE_KEY)).toBe("zh");
 
     firstView.unmount();
     fetchMock.mockReset();
     fetchMock.mockResolvedValueOnce(jsonResponse({ sessions: [sessionAlpha] }));
 
-    render(<App />);
+    renderAppWithLocale("zh");
 
     expect(await screen.findByText("Codex 会话")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "中文" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("tab", { name: "活动" })).toBeInTheDocument();
   });
 
   test("switches localized chrome without translating stored session content", async () => {
@@ -305,7 +295,7 @@ describe("App", () => {
       .mockResolvedValueOnce(jsonResponse({ sessions: [sessionAlpha] }))
       .mockResolvedValueOnce(jsonResponse(alphaDetail));
 
-    renderAppWithoutLocale();
+    const englishView = renderAppWithoutLocale();
 
     fireEvent.click(await screen.findByRole("button", { name: "Toggle project /work/project-alpha" }));
     fireEvent.click(await screen.findByRole("button", { name: /请帮我恢复这个项目的会话/i }));
@@ -324,7 +314,15 @@ describe("App", () => {
     expect(screen.getByText("Assistant")).toBeInTheDocument();
     expect(screen.getAllByText("我已经完成扫描并准备恢复。").length).toBeGreaterThan(0);
 
-    fireEvent.click(screen.getByRole("button", { name: "中文" }));
+    englishView.unmount();
+    fetchMock.mockReset();
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ sessions: [sessionAlpha] }))
+      .mockResolvedValueOnce(jsonResponse(alphaDetail));
+
+    renderAppWithLocale("zh");
+    fireEvent.click(await screen.findByRole("button", { name: "切换项目 /work/project-alpha" }));
+    fireEvent.click(await screen.findByRole("button", { name: /请帮我恢复这个项目的会话/i }));
 
     expect(await screen.findByText(expectedChineseTime)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "恢复到目录" })).toBeInTheDocument();
@@ -338,6 +336,22 @@ describe("App", () => {
     expect(screen.getByText("用户")).toBeInTheDocument();
     expect(screen.getByText("助手")).toBeInTheDocument();
     expect(screen.getAllByText("我已经完成扫描并准备恢复。").length).toBeGreaterThan(0);
+  });
+
+  test("refreshes the UI language when the window regains focus", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ sessions: [sessionAlpha] }));
+
+    renderAppWithLocale("en");
+    expect(await screen.findByText("Codex Sessions")).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe("en-US");
+
+    window.__CODEX_VIEWER_UI_CONFIG__ = { language: "zh" };
+    fetchMock.mockResolvedValueOnce(jsonResponse({ language: "zh" }));
+
+    fireEvent.focus(window);
+
+    expect(await screen.findByText("Codex 会话")).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe("zh-CN");
   });
 
   test("localizes audit actions and official sync issues in English", async () => {
@@ -1025,12 +1039,12 @@ describe("App", () => {
 });
 
 function renderAppWithLocale(locale: UiLanguage = "zh") {
-  window.localStorage.setItem(LOCALE_STORAGE_KEY, locale);
+  window.__CODEX_VIEWER_UI_CONFIG__ = { language: locale };
   return render(<App />);
 }
 
 function renderAppWithoutLocale() {
-  window.localStorage.removeItem(LOCALE_STORAGE_KEY);
+  window.__CODEX_VIEWER_UI_CONFIG__ = { language: "en" };
   return render(<App />);
 }
 

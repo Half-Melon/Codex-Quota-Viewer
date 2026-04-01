@@ -1,10 +1,11 @@
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
-import { createApp } from "../../src/server/app";
+import { createApp, createUiConfigReader } from "../../src/server/app";
 import {
   createHarness,
   readOfficialThread,
@@ -43,6 +44,18 @@ describe("createApp", () => {
 
     expect(response.body.sessions).toHaveLength(1);
     expect(response.body.sessions[0].id).toBe("http-list");
+  });
+
+  test("returns ui-config with the resolved global language", async () => {
+    const app = createApp({
+      codexHome: harness.codexHome,
+      managerHome: harness.managerHome,
+      readUiConfig: () => ({ language: "zh" }),
+    });
+
+    const response = await request(app).get("/api/ui-config").expect(200);
+
+    expect(response.body).toEqual({ language: "zh" });
   });
 
   test("restores a session and returns a resume command", async () => {
@@ -335,3 +348,58 @@ describe("createApp", () => {
     });
   });
 });
+
+describe("createUiConfigReader", () => {
+  test("falls back to the bundled default language when ui-config is unavailable", async () => {
+    const previousUiConfigPath = process.env.CODEX_VIEWER_UI_CONFIG_PATH;
+    const previousDefaultLanguage = process.env.CODEX_VIEWER_DEFAULT_LANGUAGE;
+    const previousLang = process.env.LANG;
+    const previousLcAll = process.env.LC_ALL;
+
+    delete process.env.CODEX_VIEWER_UI_CONFIG_PATH;
+    process.env.CODEX_VIEWER_DEFAULT_LANGUAGE = "zh";
+    process.env.LANG = "en_US.UTF-8";
+    process.env.LC_ALL = "";
+
+    try {
+      expect(createUiConfigReader()()).toEqual({ language: "zh" });
+    } finally {
+      restoreEnv("CODEX_VIEWER_UI_CONFIG_PATH", previousUiConfigPath);
+      restoreEnv("CODEX_VIEWER_DEFAULT_LANGUAGE", previousDefaultLanguage);
+      restoreEnv("LANG", previousLang);
+      restoreEnv("LC_ALL", previousLcAll);
+    }
+  });
+
+  test("uses the bundled default language when the ui-config payload is invalid", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "codex-ui-config-"));
+    const uiConfigPath = path.join(tempDir, "session-manager-ui.json");
+    const previousUiConfigPath = process.env.CODEX_VIEWER_UI_CONFIG_PATH;
+    const previousDefaultLanguage = process.env.CODEX_VIEWER_DEFAULT_LANGUAGE;
+    const previousLang = process.env.LANG;
+    const previousLcAll = process.env.LC_ALL;
+
+    await writeFile(uiConfigPath, "{invalid json");
+    process.env.CODEX_VIEWER_UI_CONFIG_PATH = uiConfigPath;
+    process.env.CODEX_VIEWER_DEFAULT_LANGUAGE = "zh";
+    process.env.LANG = "en_US.UTF-8";
+    process.env.LC_ALL = "";
+
+    try {
+      expect(createUiConfigReader()()).toEqual({ language: "zh" });
+    } finally {
+      restoreEnv("CODEX_VIEWER_UI_CONFIG_PATH", previousUiConfigPath);
+      restoreEnv("CODEX_VIEWER_DEFAULT_LANGUAGE", previousDefaultLanguage);
+      restoreEnv("LANG", previousLang);
+      restoreEnv("LC_ALL", previousLcAll);
+    }
+  });
+});
+
+function restoreEnv(key: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[key];
+    return;
+  }
+  process.env[key] = value;
+}

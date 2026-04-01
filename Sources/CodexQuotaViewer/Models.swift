@@ -9,13 +9,13 @@ enum RefreshIntervalPreset: String, Codable, CaseIterable {
     var displayName: String {
         switch self {
         case .manual:
-            return "Manual"
+            return AppLocalization.localized(en: "Manual", zh: "手动")
         case .oneMinute:
-            return "1 minute"
+            return AppLocalization.localized(en: "1 minute", zh: "1 分钟")
         case .fiveMinutes:
-            return "5 minutes"
+            return AppLocalization.localized(en: "5 minutes", zh: "5 分钟")
         case .fifteenMinutes:
-            return "15 minutes"
+            return AppLocalization.localized(en: "15 minutes", zh: "15 分钟")
         }
     }
 
@@ -40,9 +40,9 @@ enum StatusItemStyle: String, Codable, CaseIterable {
     var displayName: String {
         switch self {
         case .meter:
-            return "Meter"
+            return AppLocalization.localized(en: "Meter", zh: "仪表")
         case .text:
-            return "Text"
+            return AppLocalization.localized(en: "Text", zh: "文字")
         }
     }
 }
@@ -56,13 +56,13 @@ enum ProfileHealthStatus: String, Codable, Equatable {
     var label: String {
         switch self {
         case .healthy:
-            return "Healthy"
+            return AppLocalization.localized(en: "Healthy", zh: "正常")
         case .readFailure:
-            return "Read failed"
+            return AppLocalization.localized(en: "Read failed", zh: "读取失败")
         case .needsLogin:
-            return "Sign in required"
+            return AppLocalization.localized(en: "Sign in required", zh: "需要登录")
         case .expired:
-            return "Expired"
+            return AppLocalization.localized(en: "Expired", zh: "已过期")
         }
     }
 
@@ -75,21 +75,33 @@ struct AppSettings: Codable, Equatable {
     var refreshIntervalPreset: RefreshIntervalPreset
     var launchAtLoginEnabled: Bool
     var statusItemStyle: StatusItemStyle
+    var appLanguage: AppLanguage
+    var lastResolvedLanguage: ResolvedAppLanguage?
+    var preferredAccountID: String?
 
     init(
         refreshIntervalPreset: RefreshIntervalPreset = .fiveMinutes,
         launchAtLoginEnabled: Bool = false,
-        statusItemStyle: StatusItemStyle = .meter
+        statusItemStyle: StatusItemStyle = .meter,
+        appLanguage: AppLanguage = .system,
+        lastResolvedLanguage: ResolvedAppLanguage? = nil,
+        preferredAccountID: String? = nil
     ) {
         self.refreshIntervalPreset = refreshIntervalPreset
         self.launchAtLoginEnabled = launchAtLoginEnabled
         self.statusItemStyle = statusItemStyle
+        self.appLanguage = appLanguage
+        self.lastResolvedLanguage = lastResolvedLanguage
+        self.preferredAccountID = preferredAccountID
     }
 
     private enum CodingKeys: String, CodingKey {
         case refreshIntervalPreset
         case launchAtLoginEnabled
         case statusItemStyle
+        case appLanguage
+        case lastResolvedLanguage
+        case preferredAccountID
     }
 
     init(from decoder: Decoder) throws {
@@ -106,10 +118,32 @@ struct AppSettings: Codable, Equatable {
             StatusItemStyle.self,
             forKey: .statusItemStyle
         ) ?? .meter
+        appLanguage = try container.decodeIfPresent(
+            AppLanguage.self,
+            forKey: .appLanguage
+        ) ?? .system
+        lastResolvedLanguage = try container.decodeIfPresent(
+            ResolvedAppLanguage.self,
+            forKey: .lastResolvedLanguage
+        )
+        preferredAccountID = try container.decodeIfPresent(
+            String.self,
+            forKey: .preferredAccountID
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(refreshIntervalPreset, forKey: .refreshIntervalPreset)
+        try container.encode(launchAtLoginEnabled, forKey: .launchAtLoginEnabled)
+        try container.encode(statusItemStyle, forKey: .statusItemStyle)
+        try container.encode(appLanguage, forKey: .appLanguage)
+        try container.encodeIfPresent(lastResolvedLanguage, forKey: .lastResolvedLanguage)
+        try container.encodeIfPresent(preferredAccountID, forKey: .preferredAccountID)
     }
 }
 
-struct CodexSnapshot: Equatable {
+struct CodexSnapshot: Codable, Equatable {
     let account: CodexAccount
     let rateLimits: RateLimitSnapshot
     let fetchedAt: Date
@@ -135,12 +169,19 @@ struct RateLimitWindow: Codable, Equatable {
     let resetsAt: Int?
 }
 
+struct QuotaDisplayWindow: Equatable {
+    let label: String
+    let window: RateLimitWindow
+}
+
 extension CodexAccount {
     var displayLabel: String {
         if let email, !email.isEmpty {
             return email
         }
-        return type == "apiKey" ? "API Key" : "Not signed in"
+        return type == "apiKey"
+            ? AppLocalization.localized(en: "API Key", zh: "API 密钥")
+            : AppLocalization.localized(en: "Not signed in", zh: "未登录")
     }
 }
 
@@ -157,6 +198,70 @@ extension RateLimitWindow {
         guard let resetsAt else { return nil }
         return Date(timeIntervalSince1970: TimeInterval(resetsAt))
     }
+}
+
+func quotaDisplayWindows(from snapshot: CodexSnapshot?) -> [QuotaDisplayWindow] {
+    guard let snapshot else {
+        return []
+    }
+
+    return quotaDisplayWindows(from: snapshot.rateLimits)
+}
+
+func quotaDisplayWindows(from rateLimits: RateLimitSnapshot) -> [QuotaDisplayWindow] {
+    let rawWindows = [
+        (index: 0, window: rateLimits.primary),
+        (index: 1, window: rateLimits.secondary),
+    ]
+    .compactMap { entry -> (index: Int, window: RateLimitWindow)? in
+        guard let window = entry.window else {
+            return nil
+        }
+        return (index: entry.index, window: window)
+    }
+    .sorted { lhs, rhs in
+        let lhsDuration = lhs.window.windowDurationMins ?? Int.max
+        let rhsDuration = rhs.window.windowDurationMins ?? Int.max
+        if lhsDuration != rhsDuration {
+            return lhsDuration < rhsDuration
+        }
+        return lhs.index < rhs.index
+    }
+
+    return rawWindows.enumerated().map { offset, entry in
+        QuotaDisplayWindow(
+            label: quotaWindowLabel(
+                durationMins: entry.window.windowDurationMins,
+                position: offset,
+                total: rawWindows.count
+            ),
+            window: entry.window
+        )
+    }
+}
+
+private func quotaWindowLabel(
+    durationMins: Int?,
+    position: Int,
+    total: Int
+) -> String {
+    guard let durationMins, durationMins > 0 else {
+        if total == 1 {
+            return AppLocalization.localized(en: "quota", zh: "额度")
+        }
+        return AppLocalization.localized(en: "quota \(position + 1)", zh: "额度 \(position + 1)")
+    }
+
+    if durationMins % 10_080 == 0 {
+        return "\(durationMins / 10_080)w"
+    }
+    if durationMins % 1_440 == 0 {
+        return "\(durationMins / 1_440)d"
+    }
+    if durationMins % 60 == 0 {
+        return "\(durationMins / 60)h"
+    }
+    return "\(durationMins)m"
 }
 
 func classifyProfileHealth(from error: Error) -> ProfileHealthStatus {
