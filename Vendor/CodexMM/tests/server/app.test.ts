@@ -249,6 +249,7 @@ describe("createApp", () => {
       .expect(400);
 
     expect(response.body).toEqual({
+      code: "restore_target_missing_directory",
       error: "目标项目目录不存在，请先创建后再恢复。",
     });
   });
@@ -280,6 +281,7 @@ describe("createApp", () => {
       .expect(400);
 
     expect(response.body).toEqual({
+      code: "restore_target_not_directory",
       error: "目标项目目录不是文件夹，请重新选择目录。",
     });
   });
@@ -313,6 +315,7 @@ describe("createApp", () => {
         .expect(400);
 
       expect(response.body).toEqual({
+        code: "restore_target_permission_denied",
         error: "当前没有权限访问目标项目目录，请检查目录权限。",
       });
     } finally {
@@ -344,6 +347,7 @@ describe("createApp", () => {
       .expect(400);
 
     expect(response.body).toEqual({
+      code: "unsupported_restore_mode",
       error: "不支持的恢复模式，请刷新页面后重试。",
     });
   });

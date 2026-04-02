@@ -43,6 +43,26 @@ enum APIAccountAutoConfigurationError: LocalizedError {
     }
 }
 
+enum APIModelsProbeError: LocalizedError, Equatable {
+    case invalidBaseURL
+    case authenticationFailed
+    case transportFailure(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidBaseURL:
+            return APIAccountAutoConfigurationError.invalidBaseURL.errorDescription
+        case .authenticationFailed:
+            return AppLocalization.localized(
+                en: "API authentication failed. Check the API key and endpoint permissions.",
+                zh: "API 鉴权失败，请检查 API Key 和端点权限。"
+            )
+        case .transportFailure(let message):
+            return message
+        }
+    }
+}
+
 protocol APIModelsProbing: Sendable {
     func probeModels(apiKey: String, rawBaseURL: String) async throws -> APIAccountProbeResponse
 }
@@ -62,7 +82,13 @@ struct URLSessionAPIModelsProbe: APIModelsProbing, Sendable {
     }
 
     func probeModels(apiKey: String, rawBaseURL: String) async throws -> APIAccountProbeResponse {
-        let candidates = try modelsProbeCandidates(for: rawBaseURL)
+        let candidates: [ModelsProbeCandidate]
+        do {
+            candidates = try modelsProbeCandidates(for: rawBaseURL)
+        } catch APIAccountAutoConfigurationError.invalidBaseURL {
+            throw APIModelsProbeError.invalidBaseURL
+        }
+
         var lastError: Error?
 
         for candidate in candidates {
@@ -73,26 +99,48 @@ struct URLSessionAPIModelsProbe: APIModelsProbing, Sendable {
                 request.setValue("application/json", forHTTPHeaderField: "Accept")
 
                 let (data, response) = try await session.data(for: request)
-                guard let httpResponse = response as? HTTPURLResponse,
-                      (200 ..< 300).contains(httpResponse.statusCode) else {
-                    throw URLError(.badServerResponse)
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw APIModelsProbeError.transportFailure(URLError(.badServerResponse).localizedDescription)
+                }
+
+                if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
+                    throw APIModelsProbeError.authenticationFailed
+                }
+
+                guard (200 ..< 300).contains(httpResponse.statusCode) else {
+                    throw APIModelsProbeError.transportFailure(
+                        AppLocalization.localized(
+                            en: "Model probe failed with HTTP \(httpResponse.statusCode).",
+                            zh: "模型探测失败，HTTP 状态码 \(httpResponse.statusCode)。"
+                        )
+                    )
                 }
 
                 let modelIDs = try decodeModelIDs(from: data)
                 guard !modelIDs.isEmpty else {
-                    throw URLError(.cannotParseResponse)
+                    throw APIModelsProbeError.transportFailure(
+                        AppLocalization.localized(
+                            en: "Model probe returned no usable models.",
+                            zh: "模型探测没有返回可用模型。"
+                        )
+                    )
                 }
 
                 return APIAccountProbeResponse(
                     modelIDs: modelIDs,
                     normalizedBaseURL: candidate.normalizedBaseURL
                 )
-            } catch {
+            } catch let error as APIModelsProbeError {
+                if error == .authenticationFailed || error == .invalidBaseURL {
+                    throw error
+                }
                 lastError = error
+            } catch {
+                lastError = APIModelsProbeError.transportFailure(error.localizedDescription)
             }
         }
 
-        throw lastError ?? URLError(.badServerResponse)
+        throw lastError ?? APIModelsProbeError.transportFailure(URLError(.badServerResponse).localizedDescription)
     }
 }
 
@@ -101,10 +149,8 @@ func buildFallbackAPIAccountDraft(
     rawBaseURL: String,
     overrideDisplayName: String? = nil,
     overrideModel: String? = nil
-) -> APIAccountDraft {
-    let normalizedBaseURL = (try? normalizedOpenAICompatibleBaseURL(from: rawBaseURL, ensureV1: true))
-        ?? normalizedLooseBaseURL(from: rawBaseURL)
-        ?? "https://api.openai.com/v1"
+) throws -> APIAccountDraft {
+    let normalizedBaseURL = try fallbackNormalizedBaseURL(from: rawBaseURL)
     let resolvedDisplayName = normalizedAccountDisplayName(
         overrideDisplayName,
         normalizedBaseURL: normalizedBaseURL
@@ -122,6 +168,19 @@ func buildFallbackAPIAccountDraft(
             zh: "自动探测失败，已使用兜底配置。"
         )
     )
+}
+
+func shouldFallbackFromProbeError(_ error: Error) -> Bool {
+    guard let probeError = error as? APIModelsProbeError else {
+        return true
+    }
+
+    switch probeError {
+    case .invalidBaseURL, .authenticationFailed:
+        return false
+    case .transportFailure:
+        return true
+    }
 }
 
 func preferredModelID(from modelIDs: [String]) -> String? {
@@ -295,4 +354,16 @@ private func isNonChatModel(_ modelID: String) -> Bool {
     ]
 
     return blockedTokens.contains(where: { modelID.contains($0) })
+}
+
+private func fallbackNormalizedBaseURL(from rawBaseURL: String) throws -> String {
+    if let normalized = try? normalizedOpenAICompatibleBaseURL(from: rawBaseURL, ensureV1: true) {
+        return normalized
+    }
+
+    if let normalized = normalizedLooseBaseURL(from: rawBaseURL) {
+        return normalized
+    }
+
+    throw APIAccountAutoConfigurationError.invalidBaseURL
 }

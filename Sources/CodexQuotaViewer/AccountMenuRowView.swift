@@ -65,6 +65,14 @@ final class AccountMenuRowView: NSView {
         trackingAreaRef = trackingArea
     }
 
+    override func resetCursorRects() {
+        super.resetCursorRects()
+
+        if model.isEnabled {
+            addCursorRect(bounds, cursor: .pointingHand)
+        }
+    }
+
     override func mouseEntered(with event: NSEvent) {
         guard model.isEnabled else { return }
         isHovered = true
@@ -97,6 +105,7 @@ final class AccountMenuRowView: NSView {
         nameField.font = .systemFont(ofSize: 13, weight: .regular)
         alphaValue = 1
         updateAppearance()
+        window?.invalidateCursorRects(for: self)
         setAccessibilityLabel("\(model.name) \(model.primaryUsageText) \(model.secondaryUsageText)")
     }
 
@@ -162,18 +171,30 @@ final class AccountMenuRowView: NSView {
 
     private func updateAppearance() {
         let backgroundColor: NSColor
+        let borderColor: NSColor?
+        let borderWidth: CGFloat
 
         if model.isCurrent {
             backgroundColor = isHovered && model.isEnabled
                 ? NSColor.separatorColor.withAlphaComponent(0.24)
                 : NSColor.separatorColor.withAlphaComponent(0.16)
+            borderColor = isHovered && model.isEnabled
+                ? NSColor.separatorColor.withAlphaComponent(0.35)
+                : nil
+            borderWidth = borderColor == nil ? 0 : 1
+        } else if model.isEnabled && isHovered {
+            backgroundColor = NSColor.separatorColor.withAlphaComponent(0.08)
+            borderColor = NSColor.separatorColor.withAlphaComponent(0.18)
+            borderWidth = 1
         } else {
             backgroundColor = .clear
+            borderColor = nil
+            borderWidth = 0
         }
 
         cardView.layer?.backgroundColor = backgroundColor.cgColor
-        cardView.layer?.borderColor = nil
-        cardView.layer?.borderWidth = 0
+        cardView.layer?.borderColor = borderColor?.cgColor
+        cardView.layer?.borderWidth = borderWidth
     }
 }
 

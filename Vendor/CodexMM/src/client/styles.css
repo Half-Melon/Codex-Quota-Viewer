@@ -48,7 +48,7 @@ body {
     radial-gradient(circle at bottom left, rgba(255, 255, 255, 0.03), transparent 24%),
     linear-gradient(180deg, #1d1d1c 0%, #191919 100%);
   color: var(--text);
-  font-size: 14px;
+  font-size: 16px;
   line-height: 1.5;
   overflow: hidden;
 }
@@ -121,19 +121,19 @@ input::placeholder {
 }
 
 .app-topbar__title span {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-tertiary);
 }
 
 .app-topbar__stats span {
   display: inline-flex;
   align-items: center;
-  min-height: 28px;
-  padding: 0 10px;
+  min-height: 36px;
+  padding: 0 12px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.03);
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-secondary);
 }
 
@@ -144,7 +144,7 @@ input::placeholder {
   border-radius: 14px;
   background: rgba(34, 34, 33, 0.94);
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
 }
 
@@ -241,15 +241,15 @@ input::placeholder {
 }
 
 .compact-button {
-  min-height: 34px;
-  padding: 0 12px;
+  min-height: 40px;
+  padding: 0 14px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface-raised);
   color: var(--text);
   cursor: pointer;
-  line-height: 32px;
-  font-size: 12px;
+  line-height: 38px;
+  font-size: 13px;
   font-weight: 550;
   white-space: nowrap;
   transition:
@@ -303,6 +303,10 @@ input::placeholder {
     align-items: flex-start;
   }
 
+  .app-topbar__stats span {
+    min-height: 40px;
+  }
+
   .app-workspace {
     overflow: visible;
   }
@@ -324,7 +328,7 @@ input::placeholder {
   }
 
   .compact-button {
-    min-height: 36px;
-    line-height: 34px;
+    min-height: 44px;
+    line-height: 42px;
   }
 }

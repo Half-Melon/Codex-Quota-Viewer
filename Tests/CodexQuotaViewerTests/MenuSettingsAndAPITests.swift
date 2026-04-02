@@ -82,8 +82,89 @@ func settingsAccountSectionsGroupAndSortAccountsForHumanScanning() {
 }
 
 @Test
+func settingsAccountSectionsIncludeLocalizedHealthHints() {
+    withExclusiveAppLocalization {
+        AppLocalization.setPreferredLanguage(.en, preferredLanguages: ["en-US"])
+        let sections = buildSettingsAccountSections([
+            SettingsAccountPresentationInput(
+                id: "attention",
+                title: "attention@example.com",
+                authMode: .chatgpt,
+                state: .attention,
+                isCurrent: false,
+                lastUsedAt: nil,
+                host: nil,
+                model: nil
+            ),
+            SettingsAccountPresentationInput(
+                id: "api",
+                title: "api.example.com",
+                authMode: .apiKey,
+                state: .healthy,
+                isCurrent: false,
+                lastUsedAt: nil,
+                host: "api.example.com",
+                model: "gpt-5.4"
+            ),
+        ])
+
+        #expect(sections[0].items[0].subtitle.contains("Needs attention"))
+        #expect(sections[1].items[0].subtitle.contains("Healthy"))
+    }
+}
+
+@Test
+func settingsAccountPanelBuilderMarksCurrentAndAttentionStatesConsistently() {
+    withExclusiveAppLocalization {
+        AppLocalization.setPreferredLanguage(.en, preferredLanguages: ["en-US"])
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let currentProfile = makeMenuProfile(
+            id: "current",
+            displayName: "current@example.com",
+            authMode: .chatgpt,
+            snapshot: makeMenuSnapshot(
+                email: "current@example.com",
+                primaryRemaining: 81,
+                secondaryRemaining: 79,
+                fetchedAt: now
+            ),
+            isCurrent: true,
+            lastUsedAt: now
+        )
+        let apiProfile = makeMenuProfile(
+            id: "api",
+            displayName: "api.example.com",
+            authMode: .apiKey,
+            snapshot: nil,
+            isCurrent: false,
+            lastUsedAt: now.addingTimeInterval(-20),
+            healthStatus: .readFailure
+        )
+
+        let panelState = buildSettingsAccountPanelState(
+            vaultSnapshot: AccountVaultSnapshot(
+                accounts: [
+                    makeVaultRecord(from: currentProfile),
+                    makeVaultRecord(from: apiProfile),
+                ]
+            ),
+            vaultProfiles: [apiProfile],
+            currentProviderProfile: currentProfile,
+            refreshIntervalPreset: RefreshIntervalPreset.fiveMinutes,
+            actionsEnabled: false
+        )
+
+        #expect(panelState.importStatusText == "Local vault: 2 saved account(s)")
+        #expect(panelState.actionsEnabled == false)
+        #expect(panelState.sections.map(\.title) == ["Current Account (1)", "API Accounts (1)"])
+        #expect(panelState.sections[0].items[0].isCurrent)
+        #expect(panelState.sections[1].items[0].subtitle.contains("Needs attention"))
+    }
+}
+
+@Test
 func apiAutoConfigNormalizesURLAndChoosesGeneralPurposeModel() {
-    let fallback = buildFallbackAPIAccountDraft(
+    let fallback = try! buildFallbackAPIAccountDraft(
         apiKey: "sk-test",
         rawBaseURL: "shell.wyzai.top"
     )
@@ -101,6 +182,16 @@ func apiAutoConfigNormalizesURLAndChoosesGeneralPurposeModel() {
     )
 
     #expect(preferred == "gpt-4o")
+}
+
+@Test
+func apiAutoConfigRejectsInvalidFallbackBaseURL() {
+    #expect(throws: APIAccountAutoConfigurationError.invalidBaseURL) {
+        try buildFallbackAPIAccountDraft(
+            apiKey: "sk-test",
+            rawBaseURL: "://bad-url"
+        )
+    }
 }
 
 @Test
@@ -464,7 +555,8 @@ private func makeMenuProfile(
     authMode: CodexAuthMode,
     snapshot: CodexSnapshot?,
     isCurrent: Bool,
-    lastUsedAt: Date?
+    lastUsedAt: Date?,
+    healthStatus: ProfileHealthStatus = .healthy
 ) -> ProviderProfile {
     let authData: Data
     let configData: Data
@@ -493,11 +585,37 @@ private func makeMenuProfile(
         baseURLHost: authMode == .apiKey ? "api.example.com" : nil,
         model: authMode == .apiKey ? "gpt-5.4" : nil,
         snapshot: snapshot,
-        healthStatus: .healthy,
+        healthStatus: healthStatus,
         errorMessage: nil,
         isCurrent: isCurrent,
         managedFileURLs: [],
         lastUsedAt: lastUsedAt
+    )
+}
+
+private func makeVaultRecord(
+    from profile: ProviderProfile
+) -> VaultAccountRecord {
+    let directoryURL = URL(fileURLWithPath: "/tmp/\(profile.id)", isDirectory: true)
+    let metadata = VaultAccountMetadata(
+        id: profile.id,
+        displayName: profile.displayName,
+        authMode: profile.authMode,
+        providerID: profile.providerID,
+        baseURL: profile.baseURLHost.map { "https://\($0)/v1" },
+        model: profile.model,
+        createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+        lastUsedAt: profile.lastUsedAt,
+        source: .currentRuntime,
+        runtimeKey: stableAccountIdentityKey(for: profile.runtimeMaterial)
+    )
+    return VaultAccountRecord(
+        metadata: metadata,
+        runtimeMaterial: profile.runtimeMaterial,
+        directoryURL: directoryURL,
+        metadataURL: directoryURL.appendingPathComponent("metadata.json"),
+        authURL: directoryURL.appendingPathComponent("auth.json"),
+        configURL: directoryURL.appendingPathComponent("config.toml")
     )
 }
 

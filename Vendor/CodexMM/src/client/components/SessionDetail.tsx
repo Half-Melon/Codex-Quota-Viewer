@@ -189,7 +189,7 @@ export function SessionDetail({
             <ul className="failure-list">
               {batchFailures.map((failure) => (
                 <li key={failure.sessionId}>
-                  {failure.sessionId}: {localizeKnownMessage(failure.error, copy)}
+                  {failure.sessionId}: {localizeKnownMessage(failure.error, copy, failure.code)}
                 </li>
               ))}
             </ul>

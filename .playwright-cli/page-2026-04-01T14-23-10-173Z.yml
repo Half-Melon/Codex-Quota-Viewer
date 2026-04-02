@@ -1,0 +1,40 @@
+- main [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - strong [ref=e6]: Codex Sessions
+      - generic [ref=e7]: 3 indexed
+    - generic [ref=e8]:
+      - generic [ref=e9]: 3 Active
+      - generic [ref=e10]: 0 Archived
+      - generic [ref=e11]: 0 Trash
+  - complementary [ref=e142]:
+    - generic [ref=e143]:
+      - generic [ref=e144]:
+        - generic [ref=e145]: Projects
+        - generic [ref=e146]: 3 / 3
+      - generic [ref=e147]:
+        - button "Repair official threads" [ref=e148] [cursor=pointer]
+        - button "Refresh" [ref=e149] [cursor=pointer]
+    - generic [ref=e150]:
+      - textbox "Search sessions, paths, or excerpts" [ref=e151]
+      - tablist "Status filters" [ref=e152]:
+        - tab "Active" [selected] [ref=e153] [cursor=pointer]
+        - tab "Archived" [ref=e154] [cursor=pointer]
+        - tab "Trash" [ref=e155] [cursor=pointer]
+    - generic [ref=e156]:
+      - generic [ref=e158]:
+        - checkbox "Select project /work/really/long/project-name-alpha" [ref=e160]
+        - button "Toggle project /work/really/long/project-name-alpha" [ref=e161] [cursor=pointer]:
+          - generic [ref=e162]: ▸
+          - generic [ref=e163]:
+            - strong [ref=e164]: project-name-alpha
+            - generic [ref=e165]: /work/really/long/project-name-alpha
+          - generic [ref=e166]: "2"
+      - generic [ref=e168]:
+        - checkbox "Select project /work/archived/project-gamma" [ref=e170]
+        - button "Toggle project /work/archived/project-gamma" [ref=e171] [cursor=pointer]:
+          - generic [ref=e172]: ▸
+          - generic [ref=e173]:
+            - strong [ref=e174]: project-gamma
+            - generic [ref=e175]: /work/archived/project-gamma
+          - generic [ref=e176]: "1"

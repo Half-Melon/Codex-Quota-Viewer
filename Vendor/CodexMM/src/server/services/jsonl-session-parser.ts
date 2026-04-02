@@ -65,34 +65,42 @@ export type SessionFileSummary = {
   latestAgentMessageExcerpt: string;
 };
 
+export type ParsedSessionCatalog = {
+  summary: SessionFileSummary;
+  timeline: SessionTimelineItem[];
+};
+
 type CachedFileValue<T> = {
   sizeBytes: number;
   mtimeMs: number;
   value: T;
 };
 
-const sessionSummaryCache = new Map<
+const sessionCatalogCache = new Map<
   string,
-  CachedFileValue<SessionFileSummary | null>
->();
-const sessionTimelineCache = new Map<
-  string,
-  CachedFileValue<SessionTimelineItem[]>
+  CachedFileValue<ParsedSessionCatalog | null>
 >();
 
 export async function parseSessionFile(
   filePath: string,
 ): Promise<SessionFileSummary | null> {
+  const parsed = await parseSessionCatalog(filePath);
+  return parsed?.summary ?? null;
+}
+
+export async function parseSessionCatalog(
+  filePath: string,
+): Promise<ParsedSessionCatalog | null> {
   const fileStats = await stat(filePath);
-  const cachedSummary = readCachedFileValue(
-    sessionSummaryCache,
+  const cachedCatalog = readCachedFileValue(
+    sessionCatalogCache,
     filePath,
     fileStats.size,
     fileStats.mtimeMs,
   );
 
-  if (cachedSummary !== undefined) {
-    return cachedSummary;
+  if (cachedCatalog !== undefined) {
+    return cachedCatalog;
   }
 
   const input = createReadStream(filePath, { encoding: "utf8" });
@@ -106,6 +114,11 @@ export async function parseSessionFile(
   let latestAgentMessageExcerpt = "";
   let responseUserExcerpt = "";
   let responseAssistantExcerpt = "";
+  const responseMessages: TimelineDraft[] = [];
+  const fallbackMessages: TimelineDraft[] = [];
+  const toolCalls: ToolTimelineDraft[] = [];
+  const toolCallIndex = new Map<string, number>();
+  let sequence = 0;
 
   try {
     for await (const line of lines) {
@@ -131,20 +144,60 @@ export async function parseSessionFile(
       if (entry.type === "event_msg") {
         eventCount += 1;
         const payload = (entry.payload ?? {}) as Record<string, unknown>;
+        const message = normalizeMessage(readMessage(payload.message));
 
         if (payload.type === "user_message" && !userPromptExcerpt) {
-          userPromptExcerpt = truncateMessage(readMessage(payload.message));
+          userPromptExcerpt = truncateMessage(message);
         }
 
         if (payload.type === "agent_message") {
-          latestAgentMessageExcerpt = truncateMessage(readMessage(payload.message));
+          latestAgentMessageExcerpt = truncateMessage(message);
+        }
+
+        if (message) {
+          if (payload.type === "user_message" || payload.type === "agent_message") {
+            fallbackMessages.push({
+              id: `event-${sequence + 1}`,
+              order: sequence,
+              timestamp: normalizeOptionalString(
+                entry.timestamp,
+                new Date(0).toISOString(),
+              ),
+              type:
+                payload.type === "user_message"
+                  ? "message:user"
+                  : "message:assistant",
+              text: message,
+            });
+            sequence += 1;
+          }
         }
       }
 
       if (entry.type === "response_item") {
         const payload = (entry.payload ?? {}) as Record<string, unknown>;
+        const timestamp = normalizeOptionalString(
+          entry.timestamp,
+          new Date(0).toISOString(),
+        );
         if (payload.type === "function_call") {
           toolCallCount += 1;
+          const callId = normalizeOptionalString(payload.call_id, `tool-${sequence + 1}`);
+          const inputText = normalizeMessage(normalizeOptionalString(payload.arguments, ""));
+          const toolName = normalizeOptionalString(payload.name, "unknown_tool");
+          toolCallIndex.set(callId, toolCalls.length);
+          toolCalls.push({
+            id: `tool-${sequence + 1}`,
+            order: sequence,
+            timestamp,
+            type: "tool_call",
+            toolName,
+            summary: buildToolSummary(toolName, inputText, ""),
+            input: inputText,
+            output: "",
+            status: "pending",
+          });
+          sequence += 1;
         }
 
         if (payload.type === "message") {
@@ -161,6 +214,47 @@ export async function parseSessionFile(
           if (payload.role === "assistant") {
             responseAssistantExcerpt = message;
           }
+
+          if (payload.role === "user" || payload.role === "assistant") {
+            responseMessages.push({
+              id: `message-${sequence + 1}`,
+              order: sequence,
+              timestamp,
+              type:
+                payload.role === "user" ? "message:user" : "message:assistant",
+              text: message,
+            });
+            sequence += 1;
+          }
+        }
+
+        if (payload.type === "function_call_output") {
+          const callId = normalizeOptionalString(payload.call_id, "");
+          const toolIndex = toolCallIndex.get(callId);
+
+          if (toolIndex === undefined) {
+            continue;
+          }
+
+          const normalizedOutput = normalizeMessage(
+            normalizeOptionalString(payload.output, ""),
+          );
+          const existing = toolCalls[toolIndex];
+
+          if (!existing) {
+            continue;
+          }
+
+          toolCalls[toolIndex] = {
+            ...existing,
+            output: normalizedOutput,
+            summary: buildToolSummary(
+              existing.toolName,
+              existing.input,
+              normalizedOutput,
+            ),
+            status: readToolStatus(payload.output),
+          };
         }
       }
     }
@@ -174,11 +268,11 @@ export async function parseSessionFile(
   const cwd = normalizeRequiredString(metaPayload.cwd);
 
   if (!sessionId || !startedAt || !cwd) {
-    writeCachedFileValue(sessionSummaryCache, filePath, fileStats, null);
+    writeCachedFileValue(sessionCatalogCache, filePath, fileStats, null);
     return null;
   }
 
-  const summary = {
+  const summary: SessionFileSummary = {
     id: sessionId,
     cwd,
     startedAt,
@@ -200,20 +294,30 @@ export async function parseSessionFile(
     latestAgentMessageExcerpt:
       latestAgentMessageExcerpt || responseAssistantExcerpt,
   };
+  const responseMessageTypes = new Set(responseMessages.map((item) => item.type));
+  const normalizedFallbackMessages = fallbackMessages.filter(
+    (item) => item.timestamp !== startedAt || !responseMessageTypes.has(item.type),
+  );
 
-  writeCachedFileValue(sessionSummaryCache, filePath, fileStats, summary);
-  return summary;
+  const timeline = dedupeTimelineDrafts([
+    ...normalizedFallbackMessages,
+    ...responseMessages,
+    ...toolCalls,
+  ]).map(stripTimelineDraft);
+  const parsed = {
+    summary,
+    timeline,
+  };
+
+  writeCachedFileValue(sessionCatalogCache, filePath, fileStats, parsed);
+  return parsed;
 }
 
 export async function parseSessionTimeline(
   filePath: string,
 ): Promise<SessionTimelineItem[]> {
-  const page = await parseSessionTimelinePage(filePath, {
-    offset: 0,
-    limit: Number.MAX_SAFE_INTEGER,
-  });
-
-  return page.items;
+  const parsed = await parseSessionCatalog(filePath);
+  return parsed?.timeline ?? [];
 }
 
 export async function parseSessionTimelinePage(
@@ -239,149 +343,8 @@ export async function parseSessionTimelinePage(
 }
 
 async function readTimelineItems(filePath: string) {
-  const fileStats = await stat(filePath);
-  const cachedTimeline = readCachedFileValue(
-    sessionTimelineCache,
-    filePath,
-    fileStats.size,
-    fileStats.mtimeMs,
-  );
-
-  if (cachedTimeline !== undefined) {
-    return cachedTimeline;
-  }
-
-  const input = createReadStream(filePath, { encoding: "utf8" });
-  const lines = readline.createInterface({ input, crlfDelay: Infinity });
-  const responseMessages: TimelineDraft[] = [];
-  const fallbackMessages: TimelineDraft[] = [];
-  const toolCalls: ToolTimelineDraft[] = [];
-  const toolCallIndex = new Map<string, number>();
-  let sequence = 0;
-
-  try {
-    for await (const line of lines) {
-      if (!line.trim()) {
-        continue;
-      }
-
-      let entry: Record<string, unknown>;
-
-      try {
-        entry = JSON.parse(line) as Record<string, unknown>;
-      } catch {
-        continue;
-      }
-
-      const timestamp = normalizeOptionalString(entry.timestamp, new Date(0).toISOString());
-
-      if (entry.type === "event_msg") {
-        const payload = (entry.payload ?? {}) as Record<string, unknown>;
-        const message = normalizeMessage(readMessage(payload.message));
-
-        if (!message) {
-          continue;
-        }
-
-        if (payload.type === "user_message" || payload.type === "agent_message") {
-          fallbackMessages.push({
-            id: `event-${sequence + 1}`,
-            order: sequence,
-            timestamp,
-            type: payload.type === "user_message" ? "message:user" : "message:assistant",
-            text: message,
-          });
-          sequence += 1;
-        }
-
-        continue;
-      }
-
-      if (entry.type !== "response_item") {
-        continue;
-      }
-
-      const payload = (entry.payload ?? {}) as Record<string, unknown>;
-
-      if (payload.type === "message") {
-        const message = normalizeMessage(readResponseMessageText(payload));
-
-        if (!message || (payload.role !== "user" && payload.role !== "assistant")) {
-          continue;
-        }
-
-        responseMessages.push({
-          id: `message-${sequence + 1}`,
-          order: sequence,
-          timestamp,
-          type: payload.role === "user" ? "message:user" : "message:assistant",
-          text: message,
-        });
-        sequence += 1;
-        continue;
-      }
-
-      if (payload.type === "function_call") {
-        const callId = normalizeOptionalString(payload.call_id, `tool-${sequence + 1}`);
-        const inputText = normalizeMessage(normalizeOptionalString(payload.arguments, ""));
-        const toolName = normalizeOptionalString(payload.name, "unknown_tool");
-        toolCallIndex.set(callId, toolCalls.length);
-        toolCalls.push({
-          id: `tool-${sequence + 1}`,
-          order: sequence,
-          timestamp,
-          type: "tool_call",
-          toolName,
-          summary: buildToolSummary(toolName, inputText, ""),
-          input: inputText,
-          output: "",
-          status: "pending",
-        });
-        sequence += 1;
-        continue;
-      }
-
-      if (payload.type === "function_call_output") {
-        const callId = normalizeOptionalString(payload.call_id, "");
-        const toolIndex = toolCallIndex.get(callId);
-
-        if (toolIndex === undefined) {
-          continue;
-        }
-
-        const normalizedOutput = normalizeMessage(normalizeOptionalString(payload.output, ""));
-        const existing = toolCalls[toolIndex];
-
-        if (!existing) {
-          continue;
-        }
-
-        toolCalls[toolIndex] = {
-          ...existing,
-          output: normalizedOutput,
-          summary: buildToolSummary(existing.toolName, existing.input, normalizedOutput),
-          status: readToolStatus(payload.output),
-        };
-      }
-    }
-  } finally {
-    lines.close();
-  }
-
-  const responseMessageTypes = new Set(responseMessages.map((item) => item.type));
-  const mergedMessages =
-    responseMessages.length === 0
-      ? fallbackMessages
-      : [
-          ...fallbackMessages.filter((item) => !responseMessageTypes.has(item.type)),
-          ...responseMessages,
-        ];
-  const items = [...mergedMessages, ...toolCalls]
-    .sort(sortTimelineDrafts)
-    .map(stripTimelineDraft);
-
-  writeCachedFileValue(sessionTimelineCache, filePath, fileStats, items);
-  return items;
+  const parsed = await parseSessionCatalog(filePath);
+  return parsed?.timeline ?? [];
 }
 
 export async function readSessionMetaSnapshot(
@@ -587,6 +550,39 @@ function sortTimelineDrafts(left: { timestamp: string; order: number }, right: {
   }
 
   return left.order - right.order;
+}
+
+function dedupeTimelineDrafts(
+  items: Array<TimelineDraft | ToolTimelineDraft>,
+) {
+  const seen = new Set<string>();
+
+  return [...items]
+    .sort(sortTimelineDrafts)
+    .filter((item) => {
+      const key = buildTimelineDraftKey(item);
+      if (seen.has(key)) {
+        return false;
+      }
+
+      seen.add(key);
+      return true;
+    });
+}
+
+function buildTimelineDraftKey(item: TimelineDraft | ToolTimelineDraft) {
+  if (item.type === "tool_call") {
+    return [
+      item.type,
+      item.timestamp,
+      item.toolName,
+      item.input,
+      item.output,
+      item.status,
+    ].join("::");
+  }
+
+  return [item.type, item.timestamp, item.text].join("::");
 }
 
 function stripTimelineDraft(item: TimelineDraft | ToolTimelineDraft): SessionTimelineItem {

@@ -401,3 +401,83 @@ private struct ProbeStub: APIModelsProbing {
         result
     }
 }
+
+private struct FailingProbeStub: APIModelsProbing {
+    let error: Error
+
+    func probeModels(apiKey: String, rawBaseURL: String) async throws -> APIAccountProbeResponse {
+        throw error
+    }
+}
+
+@MainActor
+@Test
+func accountOnboardingCoordinatorRejectsUnauthorizedProbeWithoutFallback() async throws {
+    let harness = try makeHarness()
+    let vault = VaultAccountStore(
+        accountsRootURL: harness.appSupportURL.appendingPathComponent("Accounts", isDirectory: true)
+    )
+    let coordinator = AccountOnboardingCoordinator(
+        vaultStore: vault,
+        backupManager: BackupManager(
+            backupsRootURL: harness.appSupportURL.appendingPathComponent("SwitchBackups", isDirectory: true)
+        ),
+        protectedFilesProvider: { accountIDs in
+            [vault.indexURL] + vault.protectedMutationFileURLs(forAccountIDs: accountIDs)
+        },
+        apiModelsProbe: FailingProbeStub(error: APIModelsProbeError.authenticationFailed)
+    )
+
+    await #expect(throws: APIModelsProbeError.authenticationFailed) {
+        _ = try await coordinator.addAPIAccount(
+            apiKey: "sk-proxy-test",
+            rawBaseURL: "shell.wyzai.top"
+        )
+    }
+
+    #expect(try vault.loadSnapshot().accounts.isEmpty)
+}
+
+@MainActor
+@Test
+func accountOnboardingCoordinatorUsesCodexExecutableFromPATHWhenBundledExecutableMissing() async throws {
+    let harness = try makeHarness()
+    let vault = VaultAccountStore(
+        accountsRootURL: harness.appSupportURL.appendingPathComponent("Accounts", isDirectory: true)
+    )
+    let binDirectory = harness.homeURL.appendingPathComponent("bin", isDirectory: true)
+    try FileManager.default.createDirectory(at: binDirectory, withIntermediateDirectories: true)
+    let pathExecutable = binDirectory.appendingPathComponent("codex", isDirectory: false)
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: pathExecutable, options: .atomic)
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o755],
+        ofItemAtPath: pathExecutable.path
+    )
+
+    let coordinator = AccountOnboardingCoordinator(
+        vaultStore: vault,
+        backupManager: BackupManager(
+            backupsRootURL: harness.appSupportURL.appendingPathComponent("SwitchBackups", isDirectory: true)
+        ),
+        protectedFilesProvider: { accountIDs in
+            [vault.indexURL] + vault.protectedMutationFileURLs(forAccountIDs: accountIDs)
+        },
+        codexExecutableURL: harness.homeURL.appendingPathComponent("missing-codex", isDirectory: false),
+        bundledCodexExecutableURL: harness.homeURL.appendingPathComponent("missing-bundled-codex", isDirectory: false),
+        processEnvironment: ["PATH": binDirectory.path],
+        processRunner: { command in
+            #expect(command.codexExecutableURL == pathExecutable)
+            try FileManager.default.createDirectory(at: command.codexHomeURL, withIntermediateDirectories: true)
+            try Data(#"{"auth_mode":"chatgpt","tokens":{"access_token":"token-1","account_id":"acct-1"}}"#.utf8)
+                .write(to: command.codexHomeURL.appendingPathComponent("auth.json"), options: .atomic)
+            return AccountOnboardingProcessResult(
+                exitStatus: 0,
+                standardOutput: "ok",
+                standardError: ""
+            )
+        }
+    )
+
+    let result = try await coordinator.addChatGPTAccount()
+    #expect(result.record.metadata.authMode == .chatgpt)
+}

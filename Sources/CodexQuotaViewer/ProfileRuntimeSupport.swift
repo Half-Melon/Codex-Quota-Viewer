@@ -83,14 +83,6 @@ func canonicalRuntimeMaterialForStorage(_ runtimeMaterial: ProfileRuntimeMateria
         )
     }
 
-    if authMode == .chatgpt,
-       runtimeMaterial.configData == nil {
-        return ProfileRuntimeMaterial(
-            authData: runtimeMaterial.authData,
-            configData: Data("model_provider = \"openai\"\n".utf8)
-        )
-    }
-
     return runtimeMaterial
 }
 
@@ -350,15 +342,43 @@ func escapedTOMLString(_ value: String) -> String {
 }
 
 private func normalizedConfigValue<S: StringProtocol>(_ rawValue: S) -> String {
-    var value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-    if let commentStart = value.firstIndex(of: "#") {
-        value = String(value[..<commentStart]).trimmingCharacters(in: .whitespacesAndNewlines)
-    }
+    var value = String(rawValue).trimmingCharacters(in: .whitespacesAndNewlines)
+    value = strippingInlineTOMLComment(from: value)
     if value.hasPrefix("\""), value.hasSuffix("\""), value.count >= 2 {
         value.removeFirst()
         value.removeLast()
     }
     return value
+}
+
+private func strippingInlineTOMLComment(from rawValue: String) -> String {
+    var result = ""
+    var isInsideQuotes = false
+    var isEscaping = false
+
+    for character in rawValue {
+        if character == "#" && !isInsideQuotes {
+            break
+        }
+
+        result.append(character)
+
+        if isEscaping {
+            isEscaping = false
+            continue
+        }
+
+        if character == "\\" {
+            isEscaping = true
+            continue
+        }
+
+        if character == "\"" {
+            isInsideQuotes.toggle()
+        }
+    }
+
+    return result.trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 private func normalizedConfigBoolean(_ rawValue: String) -> Bool? {

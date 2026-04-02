@@ -181,6 +181,7 @@ final class VaultAccountStore {
     private let fileManager: FileManager
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    private let recordWriter: VaultAccountRecordWriter
 
     let accountsRootURL: URL
     let indexURL: URL
@@ -193,6 +194,7 @@ final class VaultAccountStore {
         self.accountsRootURL = accountsRootURL
         self.indexURL = indexURL ?? accountsRootURL.appendingPathComponent("accounts.json", isDirectory: false)
         self.fileManager = fileManager
+        self.recordWriter = VaultAccountRecordWriter(fileManager: fileManager)
 
         encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -520,15 +522,7 @@ final class VaultAccountStore {
     }
 
     private func writeRecord(_ record: VaultAccountRecord, writer: FileDataWriting) throws {
-        try fileManager.createDirectory(
-            at: record.directoryURL,
-            withIntermediateDirectories: true
-        )
-        try writer.write(encoder.encode(record.metadata), to: record.metadataURL)
-        try writer.write(record.runtimeMaterial.authData, to: record.authURL)
-        if let configData = record.runtimeMaterial.configData {
-            try writer.write(configData, to: record.configURL)
-        }
+        try recordWriter.write(record, writer: writer)
     }
 
     private func syncIndex(records: [VaultAccountRecord], writer: FileDataWriting) throws {

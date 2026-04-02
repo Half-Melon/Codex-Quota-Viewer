@@ -431,6 +431,14 @@ describe("SessionManager", () => {
       archived: 0,
       rolloutPath: filePath,
     });
+
+    await manager.rescan();
+
+    await expect(manager.getSessionDetail("session-rebind-cwd")).resolves.toMatchObject({
+      record: expect.objectContaining({
+        cwd: projectDir,
+      }),
+    });
   });
 
   test("rejects unsupported restore modes instead of silently normalizing them", async () => {
@@ -530,6 +538,35 @@ describe("SessionManager", () => {
       input: "src/app.ts",
       output: "export const ready = true;",
     });
+  });
+
+  test("rebuilds a v2 catalog with timeline and FTS tables while preserving audit log rows", async () => {
+    await seedSession(harness.codexHome, {
+      id: "session-v2-catalog",
+      cwd: "/work/v2-catalog",
+      startedAt: "2026-03-29T10:16:37.087Z",
+      firstUserMessage: "建立新的 catalog",
+      latestAgentMessage: "需要保留审计日志。",
+      timeline: [
+        { type: "message:user", text: "建立新的 catalog" },
+        { type: "message:assistant", text: "需要保留审计日志。" },
+      ],
+    });
+
+    await manager.rescan();
+    await manager.archiveSession("session-v2-catalog");
+
+    expect(readCatalogTableNames(harness.managerHome)).toEqual(
+      expect.arrayContaining(["audit_log", "sessions", "timeline_items", "session_search"]),
+    );
+    const auditCountBefore = readAuditLogCount(harness.managerHome);
+
+    await manager.rescan();
+
+    expect(readCatalogTableNames(harness.managerHome)).toEqual(
+      expect.arrayContaining(["audit_log", "sessions", "timeline_items", "session_search"]),
+    );
+    expect(readAuditLogCount(harness.managerHome)).toBe(auditCountBefore);
   });
 
   test("supports batch trash and batch restore without losing audit semantics", async () => {
@@ -712,4 +749,29 @@ function updateStoredSessionPath(
   const db = new Database(path.join(managerHome, "index.db"));
   db.prepare(`update sessions set ${field} = ? where id = ?`).run(value, sessionId);
   db.close();
+}
+
+function readCatalogTableNames(managerHome: string) {
+  const db = new Database(path.join(managerHome, "index.db"));
+  const rows = db
+    .prepare(
+      `
+        select name
+        from sqlite_master
+        where type in ('table', 'virtual table')
+        order by name asc
+      `,
+    )
+    .all() as Array<{ name: string }>;
+  db.close();
+  return rows.map((row) => row.name);
+}
+
+function readAuditLogCount(managerHome: string) {
+  const db = new Database(path.join(managerHome, "index.db"));
+  const row = db
+    .prepare("select count(*) as count from audit_log")
+    .get() as { count: number };
+  db.close();
+  return row.count;
 }

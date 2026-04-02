@@ -315,15 +315,13 @@ struct CodexRPCClient: Sendable {
     }
 
     private func launchConfiguration() throws -> (executableURL: URL, arguments: [String]) {
-        let fileManager = FileManager.default
-        let bundled = URL(fileURLWithPath: "/Applications/Codex.app/Contents/Resources/codex")
-        if fileManager.isExecutableFile(atPath: bundled.path) {
-            return (bundled, ["-s", "read-only", "-a", "untrusted", "app-server"])
-        }
-
-        let env = URL(fileURLWithPath: "/usr/bin/env")
-        if fileManager.isExecutableFile(atPath: env.path) {
-            return (env, ["codex", "-s", "read-only", "-a", "untrusted", "app-server"])
+        if let launchConfiguration = resolveCodexCLIConfiguration() {
+            return (
+                launchConfiguration.executableURL,
+                launchConfiguration.arguments(
+                    appending: ["-s", "read-only", "-a", "untrusted", "app-server"]
+                )
+            )
         }
 
         throw CodexRPCError.missingExecutable

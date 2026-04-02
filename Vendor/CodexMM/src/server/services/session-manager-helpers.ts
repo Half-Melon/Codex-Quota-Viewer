@@ -3,7 +3,7 @@ import path from "node:path";
 
 import type { SessionRecord } from "../../shared/contracts";
 import { shellQuote } from "../lib/paths";
-import { parseSessionFile } from "./jsonl-session-parser";
+import { parseSessionCatalog } from "./jsonl-session-parser";
 
 const SESSION_SCAN_CONCURRENCY = 16;
 
@@ -11,7 +11,7 @@ export async function collectSessions(root: string) {
   const files = await walkJsonlFiles(root);
   const entries: Array<{
     filePath: string;
-    summary: Awaited<ReturnType<typeof parseSessionFile>>;
+    parsed: Awaited<ReturnType<typeof parseSessionCatalog>>;
   }> = [];
   let nextIndex = 0;
 
@@ -28,15 +28,15 @@ export async function collectSessions(root: string) {
 
         entries.push({
           filePath,
-          summary: await parseSessionFile(filePath),
+          parsed: await parseSessionCatalog(filePath),
         });
       }
     }),
   );
 
   return entries.filter(
-    (entry): entry is { filePath: string; summary: NonNullable<typeof entry.summary> } =>
-      entry.summary !== null,
+    (entry): entry is { filePath: string; parsed: NonNullable<typeof entry.parsed> } =>
+      entry.parsed !== null,
   );
 }
 

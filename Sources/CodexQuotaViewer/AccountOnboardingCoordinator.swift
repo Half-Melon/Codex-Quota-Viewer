@@ -2,9 +2,10 @@ import Foundation
 
 struct AccountOnboardingProcessCommand {
     let codexExecutableURL: URL
+    let arguments: [String]
+    let environment: [String: String]
     let homeURL: URL
     let codexHomeURL: URL
-    let useDeviceAuth: Bool
 }
 
 struct AccountOnboardingProcessResult: Equatable {
@@ -33,8 +34,8 @@ enum AccountOnboardingError: LocalizedError {
         switch self {
         case .codexExecutableMissing:
             return AppLocalization.localized(
-                en: "Bundled codex executable was not found.",
-                zh: "找不到内置的 codex 可执行文件。"
+                en: "Codex executable was not found in /Applications or PATH.",
+                zh: "在 /Applications 或 PATH 中都找不到 codex 可执行文件。"
             )
         case .loginFailed(let message):
             return message
@@ -58,22 +59,28 @@ final class AccountOnboardingCoordinator {
     private let processRunner: ProcessRunner
     private let apiModelsProbe: APIModelsProbing
     private let fileManager: FileManager
-    private let codexExecutableURL: URL
+    private let preferredCodexExecutableURL: URL
+    private let bundledCodexExecutableURL: URL
+    private let processEnvironment: [String: String]
 
     init(
         vaultStore: VaultAccountStore,
         backupManager: BackupManager? = nil,
         protectedFilesProvider: ProtectedFilesProvider? = nil,
         codexExecutableURL: URL = URL(fileURLWithPath: "/Applications/Codex.app/Contents/Resources/codex", isDirectory: false),
+        bundledCodexExecutableURL: URL = URL(fileURLWithPath: "/Applications/Codex.app/Contents/Resources/codex", isDirectory: false),
         fileManager: FileManager = .default,
+        processEnvironment: [String: String] = ProcessInfo.processInfo.environment,
         apiModelsProbe: APIModelsProbing = URLSessionAPIModelsProbe(),
         processRunner: ProcessRunner? = nil
     ) {
         self.vaultStore = vaultStore
         self.backupManager = backupManager
         self.protectedFilesProvider = protectedFilesProvider
-        self.codexExecutableURL = codexExecutableURL
+        self.preferredCodexExecutableURL = codexExecutableURL
+        self.bundledCodexExecutableURL = bundledCodexExecutableURL
         self.fileManager = fileManager
+        self.processEnvironment = processEnvironment
         self.apiModelsProbe = apiModelsProbe
         self.processRunner = processRunner ?? Self.defaultProcessRunner
     }
@@ -89,7 +96,12 @@ final class AccountOnboardingCoordinator {
         useDeviceAuth: Bool,
         deviceAuthHandler: ((DeviceAuthInstructions) -> Void)?
     ) async throws -> AccountOnboardingResult {
-        guard fileManager.isExecutableFile(atPath: codexExecutableURL.path) else {
+        guard let launchConfiguration = resolveCodexCLIConfiguration(
+            preferredExecutableURL: preferredCodexExecutableURL,
+            bundledExecutableURL: bundledCodexExecutableURL,
+            fileManager: fileManager,
+            environment: processEnvironment
+        ) else {
             throw AccountOnboardingError.codexExecutableMissing
         }
 
@@ -102,11 +114,17 @@ final class AccountOnboardingCoordinator {
             try? fileManager.removeItem(at: tempHome)
         }
 
+        var environment = processEnvironment
+        environment["HOME"] = tempHome.path
+        environment["CODEX_HOME"] = tempCodexHome.path
         let command = AccountOnboardingProcessCommand(
-            codexExecutableURL: codexExecutableURL,
+            codexExecutableURL: launchConfiguration.executableURL,
+            arguments: launchConfiguration.arguments(
+                appending: useDeviceAuth ? ["login", "--device-auth"] : ["login"]
+            ),
+            environment: environment,
             homeURL: tempHome,
-            codexHomeURL: tempCodexHome,
-            useDeviceAuth: useDeviceAuth
+            codexHomeURL: tempCodexHome
         )
         let result = try await (
             useDeviceAuth
@@ -190,7 +208,11 @@ final class AccountOnboardingCoordinator {
                 warningMessage: nil
             )
         } catch {
-            draft = buildFallbackAPIAccountDraft(
+            guard shouldFallbackFromProbeError(error) else {
+                throw error
+            }
+
+            draft = try buildFallbackAPIAccountDraft(
                 apiKey: trimmedKey,
                 rawBaseURL: trimmedBaseURL,
                 overrideDisplayName: overrideDisplayName,
@@ -249,12 +271,8 @@ final class AccountOnboardingCoordinator {
     ) async throws -> AccountOnboardingProcessResult {
         let process = Process()
         process.executableURL = command.codexExecutableURL
-        process.arguments = command.useDeviceAuth ? ["login", "--device-auth"] : ["login"]
-
-        var environment = ProcessInfo.processInfo.environment
-        environment["HOME"] = command.homeURL.path
-        environment["CODEX_HOME"] = command.codexHomeURL.path
-        process.environment = environment
+        process.arguments = command.arguments
+        process.environment = command.environment
 
         let stdout = Pipe()
         let stderr = Pipe()
@@ -283,12 +301,8 @@ final class AccountOnboardingCoordinator {
     ) async throws -> AccountOnboardingProcessResult {
         let process = Process()
         process.executableURL = command.codexExecutableURL
-        process.arguments = ["login", "--device-auth"]
-
-        var environment = ProcessInfo.processInfo.environment
-        environment["HOME"] = command.homeURL.path
-        environment["CODEX_HOME"] = command.codexHomeURL.path
-        process.environment = environment
+        process.arguments = command.arguments
+        process.environment = command.environment
 
         let stdout = Pipe()
         let stderr = Pipe()

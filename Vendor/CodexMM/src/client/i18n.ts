@@ -9,7 +9,7 @@ export type RestoreTargetErrorKey =
 
 export type AuditActionKey = "archive" | "delete" | "restore" | "purge";
 
-type TranslationSet = {
+export type TranslationSet = {
   languageNames: Record<UiLanguage, string>;
   topbar: {
     title: string;
@@ -481,5 +481,3 @@ export function useI18n() {
 
   return value;
 }
-
-export type { TranslationSet };

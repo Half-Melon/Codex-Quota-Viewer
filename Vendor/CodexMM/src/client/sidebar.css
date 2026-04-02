@@ -43,7 +43,7 @@
 }
 
 .sidebar-header__title {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 650;
   letter-spacing: 0.01em;
   color: var(--text);
@@ -57,13 +57,13 @@
 }
 
 .sidebar-command {
-  min-height: 28px;
-  padding: 0 10px;
+  min-height: 38px;
+  padding: 0 12px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.03);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 550;
   cursor: pointer;
   transition:
@@ -90,12 +90,12 @@
 }
 
 .sidebar-filters .sidebar-input {
-  min-height: 38px;
+  min-height: 44px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.04);
   padding: 0 12px;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text);
 }
 
@@ -117,13 +117,13 @@
 
 .sidebar-filter-tab {
   flex: 0 0 auto;
-  min-height: 30px;
-  padding: 0 10px;
+  min-height: 38px;
+  padding: 0 12px;
   border: 1px solid transparent;
   border-radius: 999px;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 550;
   cursor: pointer;
   transition:
@@ -146,19 +146,28 @@
 .project-groups {
   flex: 1;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  position: relative;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 
+.project-groups__canvas {
+  position: relative;
+  min-height: 100%;
+}
+
 .project-group {
-  flex: 0 0 auto;
   border: 1px solid var(--line);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.02);
   overflow: hidden;
+}
+
+.project-group--virtual,
+.session-row--virtual {
+  position: absolute;
+  left: 0;
+  right: 0;
 }
 
 .project-group__header {
@@ -166,7 +175,8 @@
   grid-template-columns: 20px minmax(0, 1fr);
   gap: 10px;
   align-items: start;
-  padding: 10px 10px 8px;
+  min-height: 88px;
+  padding: 12px 12px 10px;
 }
 
 .project-group__header--open {
@@ -216,21 +226,27 @@
 
 .project-group__label strong {
   display: block;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 650;
   color: var(--text);
   line-height: 1.3;
-  white-space: normal;
   overflow-wrap: anywhere;
   word-break: break-word;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .project-group__label span {
   display: block;
   line-height: 1.4;
-  white-space: normal;
   overflow-wrap: anywhere;
   word-break: break-word;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .project-group__count {
@@ -250,12 +266,18 @@
   grid-template-columns: 20px minmax(0, 1fr);
   gap: 8px;
   align-items: start;
-  padding: 8px;
+  padding: 10px 10px 10px 18px;
   border: 1px solid transparent;
   border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
   transition:
     border-color 140ms ease,
     background 140ms ease;
+}
+
+.session-row--virtual {
+  margin-left: 28px;
+  width: calc(100% - 28px);
 }
 
 .session-row::before {
@@ -285,6 +307,7 @@
   flex-direction: column;
   gap: 4px;
   width: 100%;
+  min-height: 64px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -300,7 +323,7 @@
 }
 
 .session-row__headline strong {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text);
   line-height: 1.4;
@@ -316,14 +339,14 @@
 
 .session-row__headline span {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
   color: var(--text-tertiary);
   padding-top: 1px;
 }
 
 .session-row__preview span {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.55;
   color: var(--text-secondary);
   display: -webkit-box;
@@ -344,8 +367,16 @@
     overflow: visible;
   }
 
-  .sidebar-filter-tab,
-  .sidebar-filter-menu__item {
-    min-height: 32px;
+  .sidebar-command,
+  .sidebar-filter-tab {
+    min-height: 44px;
+  }
+
+  .project-group__header {
+    min-height: 96px;
+  }
+
+  .session-row__button {
+    min-height: 72px;
   }
 }

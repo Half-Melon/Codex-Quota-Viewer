@@ -10,7 +10,11 @@ export function ensureInsidePath(root: string, candidate: string): string {
     resolvedCandidate !== resolvedRoot &&
     !resolvedCandidate.startsWith(`${resolvedRoot}${path.sep}`)
   ) {
-    throw new AppError(400, `Path is outside managed root: ${candidate}`);
+    throw new AppError(
+      400,
+      "path_outside_managed_root",
+      `Path is outside managed root: ${candidate}`,
+    );
   }
 
   return resolvedCandidate;

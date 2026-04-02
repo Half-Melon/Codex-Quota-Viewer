@@ -195,9 +195,11 @@ private func settingsAccountSortComparator(
 private func makeSettingsAccountItem(
     from input: SettingsAccountPresentationInput
 ) -> SettingsAccountItem {
+    let stateLabel = localizedSettingsAccountStateLabel(input.state)
     let subtitle: String
     if input.authMode == .apiKey {
         subtitle = [
+            stateLabel,
             AppLocalization.localized(en: "API Key", zh: "API 密钥"),
             AppLocalization.localized(en: "Local vault", zh: "本地账号仓"),
             input.host,
@@ -212,7 +214,12 @@ private func makeSettingsAccountItem(
         }
         .joined(separator: " · ")
     } else {
-        subtitle = AppLocalization.localized(en: "ChatGPT · Local vault", zh: "ChatGPT · 本地账号仓")
+        subtitle = [
+            stateLabel,
+            AppLocalization.localized(en: "ChatGPT", zh: "ChatGPT"),
+            AppLocalization.localized(en: "Local vault", zh: "本地账号仓"),
+        ]
+        .joined(separator: " · ")
     }
 
     return SettingsAccountItem(
@@ -224,4 +231,15 @@ private func makeSettingsAccountItem(
         canRename: true,
         canForget: !input.isCurrent
     )
+}
+
+private func localizedSettingsAccountStateLabel(_ state: SettingsAccountState) -> String {
+    switch state {
+    case .healthy:
+        return AppLocalization.localized(en: "Healthy", zh: "正常")
+    case .limited:
+        return AppLocalization.localized(en: "Limited", zh: "受限")
+    case .attention:
+        return AppLocalization.localized(en: "Needs attention", zh: "需要关注")
+    }
 }

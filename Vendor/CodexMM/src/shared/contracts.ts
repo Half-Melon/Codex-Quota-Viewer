@@ -92,6 +92,27 @@ export type SessionFilters = {
 
 export type RestoreMode = "resume_only" | "rebind_cwd";
 
+export type ApiErrorCode =
+  | "active_session_cannot_be_archived"
+  | "active_session_must_be_deleted_before_purge"
+  | "internal_server_error"
+  | "managed_session_path_outside"
+  | "path_outside_managed_root"
+  | "rebind_requires_target"
+  | "restore_target_missing_directory"
+  | "restore_target_not_directory"
+  | "restore_target_permission_denied"
+  | "session_has_no_file_to_delete"
+  | "session_is_not_restorable"
+  | "unknown_server_error"
+  | "unknown_session"
+  | "unsupported_restore_mode";
+
+export type ApiErrorResponse = {
+  code: ApiErrorCode;
+  error: string;
+};
+
 export type RestoreRequest = {
   sessionId: string;
   targetCwd?: string;
@@ -105,6 +126,7 @@ export type BatchSessionActionRequest = {
 
 export type BatchSessionActionFailure = {
   sessionId: string;
+  code?: ApiErrorCode;
   error: string;
 };
 

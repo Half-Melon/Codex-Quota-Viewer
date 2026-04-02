@@ -1,0 +1,48 @@
+- main [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - strong [ref=e6]: Codex Sessions
+      - generic [ref=e7]: 3 indexed
+    - generic [ref=e8]:
+      - generic [ref=e9]: 3 Active
+      - generic [ref=e10]: 0 Archived
+      - generic [ref=e11]: 0 Trash
+  - generic [ref=e13]:
+    - complementary [ref=e15]:
+      - generic [ref=e16]:
+        - generic [ref=e17]:
+          - generic [ref=e18]: Projects
+          - generic [ref=e19]: 3 / 3
+        - generic [ref=e20]:
+          - button "Repair official threads" [ref=e21] [cursor=pointer]
+          - button "Refresh" [ref=e22] [cursor=pointer]
+      - generic [ref=e23]:
+        - textbox "Search sessions, paths, or excerpts" [ref=e24]
+        - tablist "Status filters" [ref=e25]:
+          - tab "Active" [selected] [ref=e26] [cursor=pointer]
+          - tab "Archived" [ref=e27] [cursor=pointer]
+          - tab "Trash" [ref=e28] [cursor=pointer]
+      - generic [ref=e29]:
+        - generic [ref=e31]:
+          - checkbox "Select project /work/really/long/project-name-alpha" [ref=e33]
+          - button "Toggle project /work/really/long/project-name-alpha" [ref=e34] [cursor=pointer]:
+            - generic [ref=e35]: ▸
+            - generic [ref=e36]:
+              - strong [ref=e37]: project-name-alpha
+              - generic [ref=e38]: /work/really/long/project-name-alpha
+            - generic [ref=e39]: "2"
+        - generic [ref=e41]:
+          - checkbox "Select project /work/archived/project-gamma" [ref=e43]
+          - button "Toggle project /work/archived/project-gamma" [ref=e44] [cursor=pointer]:
+            - generic [ref=e45]: ▸
+            - generic [ref=e46]:
+              - strong [ref=e47]: project-gamma
+              - generic [ref=e48]: /work/archived/project-gamma
+            - generic [ref=e49]: "1"
+    - generic [ref=e51]:
+      - generic [ref=e52]:
+        - generic [ref=e53]:
+          - button "Select all" [ref=e54] [cursor=pointer]
+          - button "Clear" [disabled] [ref=e55]
+        - generic [ref=e56]: No batch selection
+      - generic [ref=e59]: Select a session from the left to view the summary and full thread.

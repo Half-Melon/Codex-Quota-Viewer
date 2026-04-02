@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import express from "express";
 
 import type {
+  ApiErrorResponse,
   BatchSessionActionRequest,
   RestoreRequest,
   SessionFilters,
@@ -167,16 +168,26 @@ export function createApp(config: AppConfig) {
 
   app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
     if (error instanceof AppError) {
-      response.status(error.statusCode).json({ error: error.message });
+      const payload: ApiErrorResponse = {
+        code: error.code,
+        error: error.message,
+      };
+      response.status(error.statusCode).json(payload);
       return;
     }
 
     if (error instanceof Error) {
-      response.status(500).json({ error: error.message });
+      response.status(500).json({
+        code: "internal_server_error",
+        error: error.message,
+      } satisfies ApiErrorResponse);
       return;
     }
 
-    response.status(500).json({ error: "Unknown server error" });
+    response.status(500).json({
+      code: "unknown_server_error",
+      error: "Unknown server error",
+    } satisfies ApiErrorResponse);
   });
 
   return app;

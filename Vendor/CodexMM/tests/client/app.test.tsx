@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import type { SessionDetail, SessionRecord } from "../../src/shared/contracts";
+import type { ApiErrorCode, SessionDetail, SessionRecord } from "../../src/shared/contracts";
 import App from "../../src/client/App";
 
 type UiLanguage = "en" | "zh";
@@ -404,8 +404,7 @@ describe("App", () => {
     expect(
       await screen.findByRole("button", { name: /请帮我恢复这个项目的会话/i }),
     ).toBeInTheDocument();
-    const alphaGroup = screen.getByTestId("project-group-/work/project-alpha");
-    const alphaSession = within(alphaGroup).getByRole("button", {
+    const alphaSession = screen.getByRole("button", {
       name: /请帮我恢复这个项目的会话/i,
     });
     expect(within(alphaSession).queryByText("session-alpha")).not.toBeInTheDocument();
@@ -856,7 +855,11 @@ describe("App", () => {
       .mockResolvedValueOnce(jsonResponse({ sessions: [sessionAlpha] }))
       .mockResolvedValueOnce(jsonResponse(alphaDetail))
       .mockResolvedValueOnce(
-        errorResponse(400, "目标项目目录不存在，请先创建后再恢复。"),
+        errorResponse(
+          400,
+          "目标项目目录不存在，请先创建后再恢复。",
+          "restore_target_missing_directory",
+        ),
       );
 
     renderAppWithLocale();
@@ -879,7 +882,11 @@ describe("App", () => {
       .mockResolvedValueOnce(jsonResponse({ sessions: [sessionAlpha] }))
       .mockResolvedValueOnce(jsonResponse(alphaDetail))
       .mockResolvedValueOnce(
-        errorResponse(400, "目标项目目录不存在，请先创建后再恢复。"),
+        errorResponse(
+          400,
+          "目标项目目录不存在，请先创建后再恢复。",
+          "restore_target_missing_directory",
+        ),
       );
 
     renderAppWithoutLocale();
@@ -1036,6 +1043,32 @@ describe("App", () => {
     expect(await screen.findByTestId("session-sidebar")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "返回列表" })).not.toBeInTheDocument();
   });
+
+  test("virtualizes a large expanded project list so rendered rows stay bounded", async () => {
+    const manySessions = Array.from({ length: 1200 }, (_, index) => ({
+      ...sessionAlpha,
+      id: `session-virtual-${index + 1}`,
+      filePath: `/tmp/example-home/.codex/sessions/2026/03/29/session-virtual-${index + 1}.jsonl`,
+      activePath: `/tmp/example-home/.codex/sessions/2026/03/29/session-virtual-${index + 1}.jsonl`,
+      originalRelativePath: `2026/03/29/session-virtual-${index + 1}.jsonl`,
+      startedAt: new Date(
+        Date.parse("2026-03-29T10:16:37.087Z") + index * 1000,
+      ).toISOString(),
+      userPromptExcerpt: `大型虚拟列表会话 ${index + 1}`,
+      latestAgentMessageExcerpt: `虚拟列表预览 ${index + 1}`,
+    }));
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ sessions: manySessions }));
+
+    renderAppWithLocale();
+
+    fireEvent.click(await screen.findByRole("button", { name: "切换项目 /work/project-alpha" }));
+
+    await waitFor(() => {
+      expect(screen.queryAllByTestId(/session-row-/)).not.toHaveLength(0);
+    });
+    expect(screen.queryAllByTestId(/session-row-/).length).toBeLessThan(40);
+  });
 });
 
 function renderAppWithLocale(locale: UiLanguage = "zh") {
@@ -1056,12 +1089,16 @@ function jsonResponse(payload: unknown): Response {
   } as Response;
 }
 
-function errorResponse(status: number, message: string): Response {
+function errorResponse(
+  status: number,
+  message: string,
+  code?: ApiErrorCode,
+): Response {
   return {
     ok: false,
     status,
-    json: async () => ({ error: message }),
-    text: async () => JSON.stringify({ error: message }),
+    json: async () => ({ code, error: message }),
+    text: async () => JSON.stringify({ code, error: message }),
   } as Response;
 }
 

@@ -1,15 +1,12 @@
 import type {
+  ApiErrorCode,
   OfficialRepairStats,
   SessionFilters,
   SessionOfficialState,
   SessionRecord,
   SessionStatus,
 } from "../shared/contracts";
-import type {
-  AuditActionKey,
-  RestoreTargetErrorKey,
-  TranslationSet,
-} from "./i18n";
+import type { AuditActionKey, RestoreTargetErrorKey, TranslationSet } from "./i18n";
 
 const RESTORE_TARGET_ERROR_KEYS = new Map<string, RestoreTargetErrorKey>([
   ["目标项目目录不存在，请先创建后再恢复。", "missingDirectory"],
@@ -23,35 +20,49 @@ const RESTORE_TARGET_ERROR_KEYS = new Map<string, RestoreTargetErrorKey>([
   ],
 ]);
 
+const RESTORE_TARGET_ERROR_CODES = new Set<ApiErrorCode>([
+  "restore_target_missing_directory",
+  "restore_target_not_directory",
+  "restore_target_permission_denied",
+]);
+
 const STATIC_ERROR_LOCALIZERS: Array<{
-  messages: string[];
+  codes?: ApiErrorCode[];
+  messages?: string[];
   localize: (copy: TranslationSet) => string;
 }> = [
   {
+    codes: ["active_session_cannot_be_archived"],
     messages: ["Session is not active and cannot be archived."],
     localize: (copy: TranslationSet) => copy.errors.activeSessionCannotBeArchived,
   },
   {
+    codes: ["rebind_requires_target"],
     messages: ["永久改目录时必须提供目标项目目录。"],
     localize: (copy: TranslationSet) => copy.errors.rebindRequiresTarget,
   },
   {
+    codes: ["active_session_must_be_deleted_before_purge"],
     messages: ["Active sessions must be deleted before purge."],
     localize: (copy: TranslationSet) => copy.errors.activeSessionMustBeDeletedBeforePurge,
   },
   {
+    codes: ["session_has_no_file_to_delete"],
     messages: ["Session has no file available to delete."],
     localize: (copy: TranslationSet) => copy.errors.sessionHasNoFileToDelete,
   },
   {
+    codes: ["session_is_not_restorable"],
     messages: ["Session is not restorable."],
     localize: (copy: TranslationSet) => copy.errors.sessionIsNotRestorable,
   },
   {
+    codes: ["unsupported_restore_mode"],
     messages: ["不支持的恢复模式，请刷新页面后重试。"],
     localize: (copy: TranslationSet) => copy.errors.unsupportedRestoreMode,
   },
   {
+    codes: ["internal_server_error", "unknown_server_error"],
     messages: ["Unknown server error"],
     localize: (copy: TranslationSet) => copy.errors.unknown,
   },
@@ -107,7 +118,13 @@ export function isArchivedViewStatus(status: SessionStatus) {
   return status === "archived" || status === "restorable";
 }
 
-export function isRestoreTargetError(message: string) {
+export function isRestoreTargetError(error: unknown) {
+  const code = readErrorCode(error);
+  if (code && RESTORE_TARGET_ERROR_CODES.has(code)) {
+    return true;
+  }
+
+  const message = readErrorMessage(error);
   return RESTORE_TARGET_ERROR_KEYS.has(message);
 }
 
@@ -148,9 +165,7 @@ export function buildOfficialRepairFeedback(
 }
 
 export function readError(error: unknown, copy: TranslationSet) {
-  const message = error instanceof Error ? error.message : copy.errors.unknown;
-
-  return localizeKnownMessage(message, copy);
+  return localizeKnownMessage(readErrorMessage(error), copy, readErrorCode(error));
 }
 
 export function readMediaQueryMatch(query: string) {
@@ -175,7 +190,17 @@ function localizeRestoreTargetError(message: string, copy: TranslationSet) {
   return key ? copy.errors.restoreTarget[key] : message;
 }
 
-export function localizeKnownMessage(message: string, copy: TranslationSet) {
+export function localizeKnownMessage(
+  message: string,
+  copy: TranslationSet,
+  code?: ApiErrorCode,
+) {
+  const localizedRestoreTargetByCode = localizeRestoreTargetErrorByCode(code, copy);
+
+  if (localizedRestoreTargetByCode) {
+    return localizedRestoreTargetByCode;
+  }
+
   const localizedRestoreTarget = localizeRestoreTargetError(message, copy);
 
   if (localizedRestoreTarget !== message) {
@@ -183,7 +208,7 @@ export function localizeKnownMessage(message: string, copy: TranslationSet) {
   }
 
   for (const entry of STATIC_ERROR_LOCALIZERS) {
-    if (entry.messages.includes(message)) {
+    if ((code && entry.codes?.includes(code)) || entry.messages?.includes(message)) {
       return entry.localize(copy);
     }
   }
@@ -207,6 +232,34 @@ export function localizeKnownMessage(message: string, copy: TranslationSet) {
   }
 
   return message;
+}
+
+function localizeRestoreTargetErrorByCode(
+  code: ApiErrorCode | undefined,
+  copy: TranslationSet,
+) {
+  switch (code) {
+    case "restore_target_missing_directory":
+      return copy.errors.restoreTarget.missingDirectory;
+    case "restore_target_not_directory":
+      return copy.errors.restoreTarget.notDirectory;
+    case "restore_target_permission_denied":
+      return copy.errors.restoreTarget.permissionDenied;
+    default:
+      return null;
+  }
+}
+
+function readErrorCode(error: unknown) {
+  return error instanceof Error &&
+    "code" in error &&
+    typeof (error as Error & { code?: unknown }).code === "string"
+    ? ((error as Error & { code: ApiErrorCode }).code)
+    : undefined;
+}
+
+function readErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Unknown server error";
 }
 
 export function describeOfficialState(

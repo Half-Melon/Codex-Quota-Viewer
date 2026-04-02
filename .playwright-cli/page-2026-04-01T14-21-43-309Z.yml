@@ -1,0 +1,129 @@
+- main [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - strong [ref=e6]: Codex Sessions
+      - generic [ref=e7]: 3 indexed
+    - generic [ref=e8]:
+      - generic [ref=e9]: 3 Active
+      - generic [ref=e10]: 0 Archived
+      - generic [ref=e11]: 0 Trash
+  - generic [ref=e13]:
+    - complementary [ref=e15]:
+      - generic [ref=e16]:
+        - generic [ref=e17]:
+          - generic [ref=e18]: Projects
+          - generic [ref=e19]: 3 / 3
+        - generic [ref=e20]:
+          - button "Repair official threads" [ref=e21] [cursor=pointer]
+          - button "Refresh" [ref=e22] [cursor=pointer]
+      - generic [ref=e23]:
+        - textbox "Search sessions, paths, or excerpts" [ref=e24]
+        - tablist "Status filters" [ref=e25]:
+          - tab "Active" [selected] [ref=e26] [cursor=pointer]
+          - tab "Archived" [ref=e27] [cursor=pointer]
+          - tab "Trash" [ref=e28] [cursor=pointer]
+      - generic [ref=e29]:
+        - generic [ref=e30]:
+          - generic [ref=e31]:
+            - checkbox "Select project /work/really/long/project-name-alpha" [ref=e33]
+            - button "Toggle project /work/really/long/project-name-alpha" [expanded] [ref=e34] [cursor=pointer]:
+              - generic [ref=e35]: ▾
+              - generic [ref=e36]:
+                - strong [ref=e37]: project-name-alpha
+                - generic [ref=e38]: /work/really/long/project-name-alpha
+              - generic [ref=e39]: "2"
+          - generic [ref=e60]:
+            - generic [ref=e61]:
+              - 'checkbox "Select session: 继续整理这个项目的第二条会话，注意边界情况。" [ref=e63]'
+              - button "继续整理这个项目的第二条会话，注意边界情况。 03/30, 04:00 PM 第二条会话已经归纳完成。" [ref=e64] [cursor=pointer]:
+                - generic [ref=e65]:
+                  - strong [ref=e66]: 继续整理这个项目的第二条会话，注意边界情况。
+                  - generic [ref=e67]: 03/30, 04:00 PM
+                - generic [ref=e69]: 第二条会话已经归纳完成。
+            - generic [ref=e70]:
+              - 'checkbox "Select session: 请帮我恢复这个项目的会话，并分析潜在风险以及后续优化方向。" [ref=e72]'
+              - button "请帮我恢复这个项目的会话，并分析潜在风险以及后续优化方向。 03/29, 06:16 PM 我已经完成扫描并准备恢复，同时整理了风险说明。" [active] [ref=e73] [cursor=pointer]:
+                - generic [ref=e74]:
+                  - strong [ref=e75]: 请帮我恢复这个项目的会话，并分析潜在风险以及后续优化方向。
+                  - generic [ref=e76]: 03/29, 06:16 PM
+                - generic [ref=e78]: 我已经完成扫描并准备恢复，同时整理了风险说明。
+        - generic [ref=e41]:
+          - checkbox "Select project /work/archived/project-gamma" [ref=e43]
+          - button "Toggle project /work/archived/project-gamma" [ref=e44] [cursor=pointer]:
+            - generic [ref=e45]: ▸
+            - generic [ref=e46]:
+              - strong [ref=e47]: project-gamma
+              - generic [ref=e48]: /work/archived/project-gamma
+            - generic [ref=e49]: "1"
+    - generic [ref=e51]:
+      - generic [ref=e52]:
+        - generic [ref=e53]:
+          - button "Select all" [ref=e54] [cursor=pointer]
+          - button "Clear" [disabled] [ref=e55]
+        - generic [ref=e56]: No batch selection
+      - generic [ref=e57]:
+        - generic [ref=e79]:
+          - generic [ref=e80]:
+            - generic [ref=e81]:
+              - heading "请帮我恢复这个项目的会话，并分析潜在风险以及后续优化方向。" [level=2] [ref=e82]
+              - generic [ref=e83]: Active
+            - generic [ref=e84]: review-alpha
+            - generic [ref=e85]: /work/really/long/project-name-alpha
+            - generic [ref=e86]:
+              - generic [ref=e87]: 03/29/2026, 06:16 PM
+              - generic [ref=e88]: Codex Desktop
+              - generic [ref=e89]: vscode
+              - generic [ref=e90]: openai
+              - generic [ref=e91]: 7 lines
+              - generic [ref=e92]: 2 events
+              - generic [ref=e93]: 1 tool calls
+          - generic [ref=e94]:
+            - article [ref=e95]:
+              - text: User summary
+              - paragraph [ref=e96]: 请帮我恢复这个项目的会话，并分析潜在风险以及后续优化方向。
+            - article [ref=e97]:
+              - text: Assistant summary
+              - paragraph [ref=e98]: 我已经完成扫描并准备恢复，同时整理了风险说明。
+          - generic [ref=e99]:
+            - generic [ref=e100]:
+              - generic [ref=e101]: Target project directory
+              - textbox "Target project directory" [ref=e102]:
+                - /placeholder: /path/to/project
+                - text: /work/really/long/project-name-alpha
+            - group "Restore mode" [ref=e103]:
+              - generic [ref=e104]: Restore mode
+              - generic [ref=e105]:
+                - radio "Resume only" [checked] [ref=e106]
+                - generic [ref=e107]: Resume only
+              - generic [ref=e108]:
+                - radio "Rebind cwd" [ref=e109]
+                - generic [ref=e110]: Rebind cwd
+            - generic [ref=e111]:
+              - button "Restore to directory" [ref=e112] [cursor=pointer]
+              - button "Archive current" [ref=e113] [cursor=pointer]
+              - button "Repair this thread" [ref=e114] [cursor=pointer]
+          - generic [ref=e115]:
+            - generic [ref=e116]:
+              - strong [ref=e117]: Official Codex sync
+              - generic [ref=e118]: Needs repair
+            - paragraph [ref=e119]: This session is not fully synced with Official Codex local thread state.
+            - list [ref=e120]:
+              - listitem [ref=e121]: Official recent conversations has a stale title or updated time.
+        - generic [ref=e122]:
+          - article [ref=e123]:
+            - generic [ref=e124]:
+              - generic [ref=e125]: User
+              - time [ref=e126]: 06:16:38 PM
+            - paragraph [ref=e127]: 请帮我恢复这个项目的会话，并分析潜在风险以及后续优化方向。
+          - group [ref=e128]:
+            - generic "Tool shell shell · rg --files src 06:16:39 PM" [ref=e129] [cursor=pointer]:
+              - generic [ref=e130]: Tool
+              - strong [ref=e131]: shell
+              - generic [ref=e132]: shell · rg --files src
+              - time [ref=e133]: 06:16:39 PM
+          - article [ref=e134]:
+            - generic [ref=e135]:
+              - generic [ref=e136]: Assistant
+              - time [ref=e137]: 06:16:40 PM
+            - paragraph [ref=e138]: 我已经完成扫描并准备恢复，同时整理了风险说明。
+          - generic [ref=e139]: Loaded 3 / 3

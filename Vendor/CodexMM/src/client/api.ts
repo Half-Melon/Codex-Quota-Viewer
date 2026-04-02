@@ -1,4 +1,6 @@
 import type {
+  ApiErrorCode,
+  ApiErrorResponse,
   BatchSessionActionResponse,
   OfficialRepairResponse,
   RestoreRequest,
@@ -8,6 +10,16 @@ import type {
   SessionTimelinePage,
   UiConfigResponse,
 } from "../shared/contracts";
+
+export class ApiRequestError extends Error {
+  readonly code?: ApiErrorCode;
+
+  constructor(message: string, code?: ApiErrorCode) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.code = code;
+  }
+}
 
 export async function rescanSessions() {
   const response = await fetch("/api/sessions/rescan", {
@@ -116,10 +128,13 @@ export async function fetchUiConfig() {
 async function parseJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
     try {
-      const payload = (await response.json()) as { error?: unknown };
+      const payload = (await response.json()) as Partial<ApiErrorResponse>;
 
       if (typeof payload?.error === "string" && payload.error.length > 0) {
-        throw new Error(payload.error);
+        throw new ApiRequestError(
+          payload.error,
+          typeof payload.code === "string" ? payload.code : undefined,
+        );
       }
     } catch (error) {
       if (error instanceof Error && error.message.length > 0) {
@@ -128,7 +143,7 @@ async function parseJson<T>(response: Response): Promise<T> {
     }
 
     const fallback = await response.text();
-    throw new Error(fallback || "Request failed");
+    throw new ApiRequestError(fallback || "Request failed");
   }
 
   return (await response.json()) as T;
