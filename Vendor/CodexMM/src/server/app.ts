@@ -1,26 +1,37 @@
+import { existsSync, readFileSync } from "node:fs";
+
 import express from "express";
 
 import type {
+  ApiErrorResponse,
   BatchSessionActionRequest,
   RestoreRequest,
   SessionFilters,
+  UiConfigResponse,
 } from "../shared/contracts";
 import { AppError } from "./lib/errors";
 import { createSessionManager } from "./services/session-manager";
+import { uniqueSessionIds } from "./services/session-manager-helpers";
 
 type AppConfig = {
   codexHome: string;
   managerHome: string;
+  readUiConfig?: () => UiConfigResponse;
 };
 
 export function createApp(config: AppConfig) {
   const app = express();
   const manager = createSessionManager(config);
+  const readUiConfig = config.readUiConfig ?? createUiConfigReader();
 
   app.use(express.json());
 
   app.get("/api/health", (_request, response) => {
     response.json({ ok: true });
+  });
+
+  app.get("/api/ui-config", (_request, response) => {
+    response.json(readUiConfig());
   });
 
   app.get("/api/sessions", async (request, response, next) => {
@@ -158,19 +169,63 @@ export function createApp(config: AppConfig) {
 
   app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
     if (error instanceof AppError) {
-      response.status(error.statusCode).json({ error: error.message });
+      const payload: ApiErrorResponse = {
+        code: error.code,
+        error: error.message,
+        details: error.details,
+      };
+      response.status(error.statusCode).json(payload);
       return;
     }
 
     if (error instanceof Error) {
-      response.status(500).json({ error: error.message });
+      response.status(500).json({
+        code: "internal_server_error",
+        error: error.message,
+        details: undefined,
+      } satisfies ApiErrorResponse);
       return;
     }
 
-    response.status(500).json({ error: "Unknown server error" });
+    response.status(500).json({
+      code: "unknown_server_error",
+      error: "Unknown server error",
+      details: undefined,
+    } satisfies ApiErrorResponse);
   });
 
   return app;
+}
+
+export function createUiConfigReader(): () => UiConfigResponse {
+  const uiConfigPath = process.env.CODEX_VIEWER_UI_CONFIG_PATH;
+
+  return () => {
+    if (!uiConfigPath || !existsSync(uiConfigPath)) {
+      return { language: resolveDefaultLanguage() };
+    }
+
+    try {
+      const payload = JSON.parse(readFileSync(uiConfigPath, "utf8")) as Partial<UiConfigResponse>;
+      if (payload.language === "en" || payload.language === "zh") {
+        return { language: payload.language };
+      }
+    } catch {
+      return { language: resolveDefaultLanguage() };
+    }
+
+    return { language: resolveDefaultLanguage() };
+  };
+}
+
+function resolveDefaultLanguage(): UiConfigResponse["language"] {
+  const bundledDefault = process.env.CODEX_VIEWER_DEFAULT_LANGUAGE;
+  if (bundledDefault === "en" || bundledDefault === "zh") {
+    return bundledDefault;
+  }
+
+  const rawLocale = process.env.LC_ALL ?? process.env.LANG ?? "";
+  return rawLocale.toLowerCase().startsWith("zh") ? "zh" : "en";
 }
 
 function toOptionalString(value: unknown) {
@@ -192,9 +247,7 @@ function toOptionalNumber(value: unknown) {
 
 function readBatchRequest(body: unknown): BatchSessionActionRequest {
   const sessionIds = Array.isArray((body as BatchSessionActionRequest | undefined)?.sessionIds)
-    ? ((body as BatchSessionActionRequest).sessionIds.filter(
-        (value): value is string => typeof value === "string" && value.length > 0,
-      ) as string[])
+    ? uniqueSessionIds((body as BatchSessionActionRequest).sessionIds)
     : [];
 
   return { sessionIds };

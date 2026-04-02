@@ -1,15 +1,14 @@
 import type {
+  ApiErrorCode,
+  ApiErrorDetails,
   OfficialRepairStats,
   SessionFilters,
+  SessionOfficialIssueCode,
   SessionOfficialState,
   SessionRecord,
   SessionStatus,
 } from "../shared/contracts";
-import type {
-  AuditActionKey,
-  RestoreTargetErrorKey,
-  TranslationSet,
-} from "./i18n";
+import type { AuditActionKey, RestoreTargetErrorKey, TranslationSet } from "./i18n";
 
 const RESTORE_TARGET_ERROR_KEYS = new Map<string, RestoreTargetErrorKey>([
   ["目标项目目录不存在，请先创建后再恢复。", "missingDirectory"],
@@ -23,44 +22,45 @@ const RESTORE_TARGET_ERROR_KEYS = new Map<string, RestoreTargetErrorKey>([
   ],
 ]);
 
-const STATIC_ERROR_LOCALIZERS: Array<{
-  messages: string[];
-  localize: (copy: TranslationSet) => string;
-}> = [
-  {
-    messages: ["Session is not active and cannot be archived."],
-    localize: (copy: TranslationSet) => copy.errors.activeSessionCannotBeArchived,
-  },
-  {
-    messages: ["永久改目录时必须提供目标项目目录。"],
-    localize: (copy: TranslationSet) => copy.errors.rebindRequiresTarget,
-  },
-  {
-    messages: ["Active sessions must be deleted before purge."],
-    localize: (copy: TranslationSet) => copy.errors.activeSessionMustBeDeletedBeforePurge,
-  },
-  {
-    messages: ["Session has no file available to delete."],
-    localize: (copy: TranslationSet) => copy.errors.sessionHasNoFileToDelete,
-  },
-  {
-    messages: ["Session is not restorable."],
-    localize: (copy: TranslationSet) => copy.errors.sessionIsNotRestorable,
-  },
-  {
-    messages: ["不支持的恢复模式，请刷新页面后重试。"],
-    localize: (copy: TranslationSet) => copy.errors.unsupportedRestoreMode,
-  },
-  {
-    messages: ["Unknown server error"],
-    localize: (copy: TranslationSet) => copy.errors.unknown,
-  },
-];
+const RESTORE_TARGET_ERROR_CODES = new Set<ApiErrorCode>([
+  "restore_target_missing_directory",
+  "restore_target_not_directory",
+  "restore_target_permission_denied",
+]);
+
+const STATIC_ERROR_LOCALIZERS: Partial<Record<ApiErrorCode, (copy: TranslationSet) => string>> = {
+  active_session_cannot_be_archived: (copy) => copy.errors.activeSessionCannotBeArchived,
+  rebind_requires_target: (copy) => copy.errors.rebindRequiresTarget,
+  active_session_must_be_deleted_before_purge: (copy) =>
+    copy.errors.activeSessionMustBeDeletedBeforePurge,
+  session_has_no_file_to_delete: (copy) => copy.errors.sessionHasNoFileToDelete,
+  session_is_not_restorable: (copy) => copy.errors.sessionIsNotRestorable,
+  unsupported_restore_mode: (copy) => copy.errors.unsupportedRestoreMode,
+  internal_server_error: (copy) => copy.errors.unknown,
+  unknown_server_error: (copy) => copy.errors.unknown,
+};
+
+const STATIC_LEGACY_MESSAGE_LOCALIZERS = new Map<string, (copy: TranslationSet) => string>([
+  ["Session is not active and cannot be archived.", (copy) => copy.errors.activeSessionCannotBeArchived],
+  ["永久改目录时必须提供目标项目目录。", (copy) => copy.errors.rebindRequiresTarget],
+  ["Active sessions must be deleted before purge.", (copy) => copy.errors.activeSessionMustBeDeletedBeforePurge],
+  ["Session has no file available to delete.", (copy) => copy.errors.sessionHasNoFileToDelete],
+  ["Session is not restorable.", (copy) => copy.errors.sessionIsNotRestorable],
+  ["不支持的恢复模式，请刷新页面后重试。", (copy) => copy.errors.unsupportedRestoreMode],
+  ["Unknown server error", (copy) => copy.errors.unknown],
+]);
 
 const UNKNOWN_SESSION_PATTERN = /^Unknown session: (.+)$/;
 const MANAGED_SESSION_PATH_PATTERN =
   /^会话 (active|archive|snapshot) 文件路径超出了受管目录，已拒绝继续操作。$/;
 const OUTSIDE_MANAGED_ROOT_PATTERN = /^Path is outside managed root: (.+)$/;
+export const NARROW_VIEWPORT_MEDIA_QUERY = "(max-width: 767px)";
+const TRASHABLE_SESSION_STATUSES = new Set<SessionStatus>(["active", "archived"]);
+const RESTORABLE_SESSION_STATUSES = new Set<SessionStatus>([
+  "archived",
+  "deleted_pending_purge",
+  "restorable",
+]);
 
 export function mergeSessionList(
   current: SessionRecord[],
@@ -107,7 +107,25 @@ export function isArchivedViewStatus(status: SessionStatus) {
   return status === "archived" || status === "restorable";
 }
 
-export function isRestoreTargetError(message: string) {
+export function canTrashSessionStatus(status: SessionStatus) {
+  return TRASHABLE_SESSION_STATUSES.has(status);
+}
+
+export function canRestoreSessionStatus(status: SessionStatus) {
+  return RESTORABLE_SESSION_STATUSES.has(status);
+}
+
+export function canResumeSessionStatus(status: SessionStatus) {
+  return status === "active" || canRestoreSessionStatus(status);
+}
+
+export function isRestoreTargetError(error: unknown) {
+  const code = readErrorCode(error);
+  if (code && RESTORE_TARGET_ERROR_CODES.has(code)) {
+    return true;
+  }
+
+  const message = readErrorMessage(error);
   return RESTORE_TARGET_ERROR_KEYS.has(message);
 }
 
@@ -148,9 +166,12 @@ export function buildOfficialRepairFeedback(
 }
 
 export function readError(error: unknown, copy: TranslationSet) {
-  const message = error instanceof Error ? error.message : copy.errors.unknown;
-
-  return localizeKnownMessage(message, copy);
+  return localizeKnownMessage(
+    readErrorMessage(error),
+    copy,
+    readErrorCode(error),
+    readErrorDetails(error),
+  );
 }
 
 export function readMediaQueryMatch(query: string) {
@@ -159,6 +180,28 @@ export function readMediaQueryMatch(query: string) {
   }
 
   return window.matchMedia(query).matches;
+}
+
+export function subscribeMediaQuery(
+  query: string,
+  onMatchChange: (matches: boolean) => void,
+) {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    onMatchChange(false);
+    return () => {};
+  }
+
+  const mediaQuery = window.matchMedia(query);
+  const handleChange = () => {
+    onMatchChange(mediaQuery.matches);
+  };
+
+  handleChange();
+  mediaQuery.addEventListener("change", handleChange);
+
+  return () => {
+    mediaQuery.removeEventListener("change", handleChange);
+  };
 }
 
 function filterSessionsByStatus(
@@ -175,55 +218,174 @@ function localizeRestoreTargetError(message: string, copy: TranslationSet) {
   return key ? copy.errors.restoreTarget[key] : message;
 }
 
-export function localizeKnownMessage(message: string, copy: TranslationSet) {
-  const localizedRestoreTarget = localizeRestoreTargetError(message, copy);
+export function localizeKnownMessage(
+  message: string,
+  copy: TranslationSet,
+  code?: ApiErrorCode,
+  details?: ApiErrorDetails,
+) {
+  const localizedByCode = localizeKnownMessageByCode(code, details, message, copy);
+  if (localizedByCode) {
+    return localizedByCode;
+  }
 
+  const localizedRestoreTarget = localizeRestoreTargetError(message, copy);
   if (localizedRestoreTarget !== message) {
     return localizedRestoreTarget;
   }
 
-  for (const entry of STATIC_ERROR_LOCALIZERS) {
-    if (entry.messages.includes(message)) {
-      return entry.localize(copy);
-    }
+  const localizedStatic = STATIC_LEGACY_MESSAGE_LOCALIZERS.get(message);
+  if (localizedStatic) {
+    return localizedStatic(copy);
   }
 
-  const unknownSessionMatch = message.match(UNKNOWN_SESSION_PATTERN);
+  const localizedDynamic = localizeDynamicErrorFromLegacyMessage(message, copy);
+  return localizedDynamic ?? message;
+}
 
+function localizeKnownMessageByCode(
+  code: ApiErrorCode | undefined,
+  details: ApiErrorDetails | undefined,
+  message: string,
+  copy: TranslationSet,
+) {
+  switch (code) {
+    case "restore_target_missing_directory":
+      return copy.errors.restoreTarget.missingDirectory;
+    case "restore_target_not_directory":
+      return copy.errors.restoreTarget.notDirectory;
+    case "restore_target_permission_denied":
+      return copy.errors.restoreTarget.permissionDenied;
+    case "unknown_session":
+      return localizeUnknownSession(details, message, copy);
+    case "managed_session_path_outside":
+      return localizeManagedSessionPathOutside(details, message, copy);
+    case "path_outside_managed_root":
+      return localizePathOutsideManagedRoot(details, message, copy);
+    default:
+      return code ? (STATIC_ERROR_LOCALIZERS[code]?.(copy) ?? null) : null;
+  }
+}
+
+function localizeDynamicErrorFromLegacyMessage(
+  message: string,
+  copy: TranslationSet,
+) {
+  const unknownSessionMatch = message.match(UNKNOWN_SESSION_PATTERN);
   if (unknownSessionMatch) {
     return copy.errors.unknownSession(unknownSessionMatch[1]!);
   }
 
   const managedSessionPathMatch = message.match(MANAGED_SESSION_PATH_PATTERN);
-
   if (managedSessionPathMatch) {
     return copy.errors.managedSessionPathOutside(managedSessionPathMatch[1]!);
   }
 
   const outsideManagedRootMatch = message.match(OUTSIDE_MANAGED_ROOT_PATTERN);
-
   if (outsideManagedRootMatch) {
     return copy.errors.pathOutsideManagedRoot(outsideManagedRootMatch[1]!);
   }
 
-  return message;
+  return null;
+}
+
+function localizeUnknownSession(
+  details: ApiErrorDetails | undefined,
+  message: string,
+  copy: TranslationSet,
+) {
+  const sessionIdFromDetails =
+    typeof details?.sessionId === "string" ? details.sessionId : null;
+  const sessionId = sessionIdFromDetails ?? message.match(UNKNOWN_SESSION_PATTERN)?.[1] ?? null;
+
+  return sessionId ? copy.errors.unknownSession(sessionId) : null;
+}
+
+function localizeManagedSessionPathOutside(
+  details: ApiErrorDetails | undefined,
+  message: string,
+  copy: TranslationSet,
+) {
+  const labelFromDetails =
+    details?.label === "active" || details?.label === "archive" || details?.label === "snapshot"
+      ? details.label
+      : null;
+  const label = labelFromDetails ?? message.match(MANAGED_SESSION_PATH_PATTERN)?.[1] ?? null;
+
+  return label ? copy.errors.managedSessionPathOutside(label) : null;
+}
+
+function localizePathOutsideManagedRoot(
+  details: ApiErrorDetails | undefined,
+  message: string,
+  copy: TranslationSet,
+) {
+  const candidateFromDetails =
+    typeof details?.candidatePath === "string" ? details.candidatePath : null;
+  const candidate = candidateFromDetails ?? message.match(OUTSIDE_MANAGED_ROOT_PATTERN)?.[1] ?? null;
+
+  return candidate ? copy.errors.pathOutsideManagedRoot(candidate) : null;
+}
+
+function readErrorCode(error: unknown) {
+  return error instanceof Error &&
+    "code" in error &&
+    typeof (error as Error & { code?: unknown }).code === "string"
+    ? ((error as Error & { code: ApiErrorCode }).code)
+    : undefined;
+}
+
+function readErrorDetails(error: unknown): ApiErrorDetails | undefined {
+  if (!(error instanceof Error) || !("details" in error)) {
+    return undefined;
+  }
+
+  const details = (error as Error & { details?: unknown }).details;
+  if (!details || typeof details !== "object") {
+    return undefined;
+  }
+
+  const normalized: ApiErrorDetails = {};
+
+  if (typeof (details as { sessionId?: unknown }).sessionId === "string") {
+    normalized.sessionId = (details as { sessionId: string }).sessionId;
+  }
+
+  const label = (details as { label?: unknown }).label;
+  if (label === "active" || label === "archive" || label === "snapshot") {
+    normalized.label = label;
+  }
+
+  if (typeof (details as { managedRoot?: unknown }).managedRoot === "string") {
+    normalized.managedRoot = (details as { managedRoot: string }).managedRoot;
+  }
+
+  if (typeof (details as { candidatePath?: unknown }).candidatePath === "string") {
+    normalized.candidatePath = (details as { candidatePath: string }).candidatePath;
+  }
+
+  if (typeof (details as { resolvedCandidatePath?: unknown }).resolvedCandidatePath === "string") {
+    normalized.resolvedCandidatePath = (
+      details as { resolvedCandidatePath: string }
+    ).resolvedCandidatePath;
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function readErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Unknown server error";
 }
 
 export function describeOfficialState(
   officialState: SessionOfficialState,
   copy: TranslationSet,
 ) {
-  const issues = officialState.canAppearInCodex
-    ? buildVisibleOfficialIssues(officialState, copy)
-    : buildHiddenOfficialIssues(officialState, copy);
+  const issues = officialState.issueCodes.map((issueCode) =>
+    localizeOfficialIssue(issueCode, copy),
+  );
 
-  const summary = officialState.canAppearInCodex
-    ? issues.length > 0
-      ? copy.detail.officialSummaryRepairNeeded
-      : copy.detail.officialSummarySynced
-    : issues.length > 0
-      ? copy.detail.officialSummaryHiddenRepairNeeded
-      : copy.detail.officialSummaryHidden;
+  const summary = localizeOfficialSummary(officialState, copy);
 
   return { summary, issues };
 }
@@ -235,37 +397,39 @@ export function localizeAuditAction(
   return copy.detail.auditActions[action as AuditActionKey] ?? action;
 }
 
-function buildVisibleOfficialIssues(
+function localizeOfficialSummary(
   officialState: SessionOfficialState,
   copy: TranslationSet,
 ) {
-  return [
-    !officialState.threadRowPresent ? copy.detail.officialIssueMissingThread : null,
-    officialState.threadRowPresent && !officialState.rolloutPathMatches
-      ? copy.detail.officialIssueWrongRolloutPath
-      : null,
-    officialState.threadRowPresent && !officialState.archivedFlagMatches
-      ? copy.detail.officialIssueArchivedFlagMismatch
-      : null,
-    !officialState.sessionIndexPresent
-      ? copy.detail.officialIssueMissingRecentConversation
-      : null,
-    officialState.sessionIndexPresent && !officialState.sessionIndexMatches
-      ? copy.detail.officialIssueStaleRecentConversation
-      : null,
-  ].filter((issue): issue is string => Boolean(issue));
+  if (!officialState.canAppearInCodex) {
+    return officialState.status === "repair_needed"
+      ? copy.detail.officialSummaryHiddenRepairNeeded
+      : copy.detail.officialSummaryHidden;
+  }
+
+  return officialState.status === "repair_needed"
+    ? copy.detail.officialSummaryRepairNeeded
+    : copy.detail.officialSummarySynced;
 }
 
-function buildHiddenOfficialIssues(
-  officialState: SessionOfficialState,
+function localizeOfficialIssue(
+  issueCode: SessionOfficialIssueCode,
   copy: TranslationSet,
 ) {
-  return [
-    officialState.threadRowPresent
-      ? copy.detail.officialIssueSnapshotThreadStillPresent
-      : null,
-    officialState.sessionIndexPresent
-      ? copy.detail.officialIssueSnapshotRecentConversationStillPresent
-      : null,
-  ].filter((issue): issue is string => Boolean(issue));
+  switch (issueCode) {
+    case "missing_thread":
+      return copy.detail.officialIssueMissingThread;
+    case "wrong_rollout_path":
+      return copy.detail.officialIssueWrongRolloutPath;
+    case "archived_flag_mismatch":
+      return copy.detail.officialIssueArchivedFlagMismatch;
+    case "missing_recent_conversation":
+      return copy.detail.officialIssueMissingRecentConversation;
+    case "stale_recent_conversation":
+      return copy.detail.officialIssueStaleRecentConversation;
+    case "snapshot_thread_still_present":
+      return copy.detail.officialIssueSnapshotThreadStillPresent;
+    case "snapshot_recent_conversation_still_present":
+      return copy.detail.officialIssueSnapshotRecentConversationStillPresent;
+  }
 }

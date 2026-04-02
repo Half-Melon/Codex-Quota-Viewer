@@ -57,7 +57,7 @@
 
 .reader-toolbar__summary,
 .reader-selection-bar__summary {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-tertiary);
 }
 
@@ -127,7 +127,7 @@
 
 .reader-summary__session-id,
 .reader-summary__path {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-tertiary);
   word-break: break-all;
 }
@@ -138,7 +138,7 @@
   border: 1px solid rgba(151, 168, 191, 0.18);
   border-radius: 10px;
   background: rgba(151, 168, 191, 0.08);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.6;
   color: var(--text-secondary);
 }
@@ -151,12 +151,12 @@
 .reader-summary__meta span {
   display: inline-flex;
   align-items: center;
-  min-height: 24px;
+  min-height: 28px;
   padding: 0 8px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.03);
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
   color: var(--text-secondary);
 }
@@ -177,13 +177,13 @@
 .summary-card span,
 .reader-actions__field span,
 .audit-inline span {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-tertiary);
 }
 
 .summary-card p {
   margin: 6px 0 0;
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.65;
   color: var(--text);
 }
@@ -214,18 +214,18 @@
 
 .reader-actions__mode legend {
   padding: 0;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-tertiary);
 }
 
 .reader-actions__mode-option {
   gap: 8px;
-  min-height: 34px;
+  min-height: 40px;
   padding: 0 10px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.03);
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text-secondary);
 }
 
@@ -234,12 +234,12 @@
 }
 
 .detail-input {
-  min-height: 38px;
+  min-height: 44px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.04);
   padding: 0 12px;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text);
 }
 
@@ -249,7 +249,7 @@
 }
 
 .field-error {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.5;
   color: #f1c8c8;
 }
@@ -270,7 +270,7 @@
 .resume-box code {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.6;
   color: #dde4ec;
   overflow-wrap: anywhere;
@@ -295,14 +295,14 @@
 }
 
 .official-sync-panel__header strong {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text);
 }
 
 .official-sync-panel__header span,
 .official-sync-panel p,
 .official-sync-panel__issues {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.6;
   color: var(--text-secondary);
 }
@@ -354,7 +354,7 @@
 }
 
 .thread-panel__meta {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-tertiary);
 }
 
@@ -386,17 +386,17 @@
 .thread-entry__pill {
   display: inline-flex;
   align-items: center;
-  min-height: 20px;
+  min-height: 24px;
   padding: 0 7px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.08);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 650;
   color: var(--text-secondary);
 }
 
 .thread-entry time {
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
   color: var(--text-tertiary);
 }
@@ -404,7 +404,7 @@
 .thread-entry p,
 .thread-entry pre {
   margin: 0;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.72;
   color: var(--text);
   white-space: pre-wrap;
@@ -447,7 +447,7 @@
 .thread-entry__tool-body span {
   display: block;
   margin-bottom: 6px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-tertiary);
 }
 
@@ -502,12 +502,12 @@
 
 @media (max-width: 767px) {
   .reader-shell {
-    height: auto;
-    min-height: auto;
+    height: 100%;
+    min-height: 0;
   }
 
   .reader-content {
-    overflow: visible;
+    overflow-y: auto;
   }
 
   .reader-toolbar,
@@ -519,5 +519,10 @@
   .reader-selection-bar {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .reader-actions__mode-option,
+  .detail-input {
+    min-height: 44px;
   }
 }

@@ -6,7 +6,10 @@ enum LaunchAtLoginError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unsupportedBundle:
-            return "Launch at login can only be configured when running from the app bundle."
+            return AppLocalization.localized(
+                en: "Launch at login can only be configured when running from the app bundle.",
+                zh: "只有从 app bundle 运行时才能配置登录时启动。"
+            )
         }
     }
 }

@@ -1,47 +1,28 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import type { SessionDetail, SessionRecord } from "../../src/shared/contracts";
+import type { ApiErrorCode, SessionDetail, SessionRecord } from "../../src/shared/contracts";
 import App from "../../src/client/App";
+import { NARROW_VIEWPORT_MEDIA_QUERY } from "../../src/client/session-browser-helpers";
 
 type UiLanguage = "en" | "zh";
-
-const LOCALE_STORAGE_KEY = "codex-session-manager.locale";
 
 const syncedOfficialState = {
   status: "synced" as const,
   canAppearInCodex: true,
-  threadRowPresent: true,
-  sessionIndexPresent: true,
-  rolloutPathMatches: true,
-  archivedFlagMatches: true,
-  sessionIndexMatches: true,
-  summary: "这条会话已经同步到官方 Codex 的 threads 和 recent conversations。",
-  issues: [],
+  issueCodes: [],
 };
 
 const repairNeededOfficialState = {
   status: "repair_needed" as const,
   canAppearInCodex: true,
-  threadRowPresent: false,
-  sessionIndexPresent: false,
-  rolloutPathMatches: false,
-  archivedFlagMatches: false,
-  sessionIndexMatches: false,
-  summary: "这条会话在官方 Codex 的本地线程状态还没有完全同步。",
-  issues: ["官方 threads 缺少这条线程记录。", "官方 recent conversations 缺少这条索引。"],
+  issueCodes: ["missing_thread", "missing_recent_conversation"],
 };
 
 const hiddenOfficialState = {
   status: "hidden" as const,
   canAppearInCodex: false,
-  threadRowPresent: false,
-  sessionIndexPresent: false,
-  rolloutPathMatches: true,
-  archivedFlagMatches: true,
-  sessionIndexMatches: true,
-  summary: "这条会话只剩 snapshot 备份，当前已从官方 Codex 列表隐藏。",
-  issues: [],
+  issueCodes: [],
 };
 
 const sessionAlpha: SessionRecord = {
@@ -227,13 +208,13 @@ describe("App", () => {
 
   beforeEach(() => {
     isNarrowViewport = false;
-    window.localStorage.clear();
+    window.__CODEX_VIEWER_UI_CONFIG__ = { language: "zh" };
     vi.stubGlobal("fetch", fetchMock);
     vi.stubGlobal("confirm", confirmMock);
     vi.stubGlobal(
       "matchMedia",
       vi.fn().mockImplementation((query: string) => ({
-        matches: isNarrowViewport && query === "(max-width: 767px)",
+        matches: isNarrowViewport && query === NARROW_VIEWPORT_MEDIA_QUERY,
         media: query,
         onchange: null,
         addEventListener: vi.fn(),
@@ -251,14 +232,14 @@ describe("App", () => {
   });
 
   afterEach(() => {
-    window.localStorage.clear();
+    delete window.__CODEX_VIEWER_UI_CONFIG__;
     vi.unstubAllGlobals();
     fetchMock.mockReset();
     clipboardWriteText.mockReset();
     confirmMock.mockReset();
   });
 
-  test("defaults to English and persists the selected locale after switching", async () => {
+  test("uses the injected global language on first render", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ sessions: [sessionAlpha, sessionBeta] }));
 
     const firstView = renderAppWithoutLocale();
@@ -267,24 +248,16 @@ describe("App", () => {
     expect(screen.getByText("2 indexed")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Active" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Repair official threads" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "English" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("textbox", { name: "Search sessions, paths, or excerpts" })).toBeInTheDocument();
-    expect(window.localStorage.getItem(LOCALE_STORAGE_KEY)).toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: "中文" }));
-
-    expect(await screen.findByText("Codex 会话")).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "活动" })).toBeInTheDocument();
-    expect(window.localStorage.getItem(LOCALE_STORAGE_KEY)).toBe("zh");
 
     firstView.unmount();
     fetchMock.mockReset();
     fetchMock.mockResolvedValueOnce(jsonResponse({ sessions: [sessionAlpha] }));
 
-    render(<App />);
+    renderAppWithLocale("zh");
 
     expect(await screen.findByText("Codex 会话")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "中文" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("tab", { name: "活动" })).toBeInTheDocument();
   });
 
   test("switches localized chrome without translating stored session content", async () => {
@@ -305,7 +278,7 @@ describe("App", () => {
       .mockResolvedValueOnce(jsonResponse({ sessions: [sessionAlpha] }))
       .mockResolvedValueOnce(jsonResponse(alphaDetail));
 
-    renderAppWithoutLocale();
+    const englishView = renderAppWithoutLocale();
 
     fireEvent.click(await screen.findByRole("button", { name: "Toggle project /work/project-alpha" }));
     fireEvent.click(await screen.findByRole("button", { name: /请帮我恢复这个项目的会话/i }));
@@ -324,7 +297,15 @@ describe("App", () => {
     expect(screen.getByText("Assistant")).toBeInTheDocument();
     expect(screen.getAllByText("我已经完成扫描并准备恢复。").length).toBeGreaterThan(0);
 
-    fireEvent.click(screen.getByRole("button", { name: "中文" }));
+    englishView.unmount();
+    fetchMock.mockReset();
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ sessions: [sessionAlpha] }))
+      .mockResolvedValueOnce(jsonResponse(alphaDetail));
+
+    renderAppWithLocale("zh");
+    fireEvent.click(await screen.findByRole("button", { name: "切换项目 /work/project-alpha" }));
+    fireEvent.click(await screen.findByRole("button", { name: /请帮我恢复这个项目的会话/i }));
 
     expect(await screen.findByText(expectedChineseTime)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "恢复到目录" })).toBeInTheDocument();
@@ -338,6 +319,22 @@ describe("App", () => {
     expect(screen.getByText("用户")).toBeInTheDocument();
     expect(screen.getByText("助手")).toBeInTheDocument();
     expect(screen.getAllByText("我已经完成扫描并准备恢复。").length).toBeGreaterThan(0);
+  });
+
+  test("refreshes the UI language when the window regains focus", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ sessions: [sessionAlpha] }));
+
+    renderAppWithLocale("en");
+    expect(await screen.findByText("Codex Sessions")).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe("en-US");
+
+    window.__CODEX_VIEWER_UI_CONFIG__ = { language: "zh" };
+    fetchMock.mockResolvedValueOnce(jsonResponse({ language: "zh" }));
+
+    fireEvent.focus(window);
+
+    expect(await screen.findByText("Codex 会话")).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe("zh-CN");
   });
 
   test("localizes audit actions and official sync issues in English", async () => {
@@ -390,8 +387,7 @@ describe("App", () => {
     expect(
       await screen.findByRole("button", { name: /请帮我恢复这个项目的会话/i }),
     ).toBeInTheDocument();
-    const alphaGroup = screen.getByTestId("project-group-/work/project-alpha");
-    const alphaSession = within(alphaGroup).getByRole("button", {
+    const alphaSession = screen.getByRole("button", {
       name: /请帮我恢复这个项目的会话/i,
     });
     expect(within(alphaSession).queryByText("session-alpha")).not.toBeInTheDocument();
@@ -403,6 +399,67 @@ describe("App", () => {
     expect(await screen.findByText("shell · rg --files")).toBeInTheDocument();
     expect(screen.getAllByText("我已经完成扫描并准备恢复。").length).toBeGreaterThan(0);
     expect(screen.getByText("这条会话已经同步到官方 Codex 的 threads 和 recent conversations。")).toBeInTheDocument();
+  });
+
+  test("renders truncation hooks for long sidebar session titles and previews", async () => {
+    const longSidebarSession: SessionRecord = {
+      ...sessionAlpha,
+      id: "session-long-sidebar",
+      userPromptExcerpt:
+        "你现在是一位拥有十年以上经验的首席全栈架构师高级产品经理资深交互设计专家以及安全测试工程师请继续完整深度审查这个项目",
+      latestAgentMessageExcerpt:
+        "我已经完成第一轮扫描并整理出需要继续修复的高风险问题与后续建议请继续查看完整列表",
+    };
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ sessions: [longSidebarSession] }));
+
+    renderAppWithLocale();
+
+    fireEvent.click(await screen.findByRole("button", { name: "切换项目 /work/project-alpha" }));
+
+    const row = await screen.findByTestId(`session-row-${longSidebarSession.id}`);
+    const title = within(row).getByTestId("sidebar-session-title");
+    const preview = within(row).getByTestId("sidebar-session-preview-text");
+
+    expect(title).toHaveClass("session-row__title");
+    expect(title).toHaveAttribute("title", longSidebarSession.userPromptExcerpt);
+    expect(preview).toHaveClass("session-row__preview-text");
+    expect(preview).toHaveAttribute("title", longSidebarSession.latestAgentMessageExcerpt);
+  });
+
+  test("uses compact narrow project rows with truncation hooks", async () => {
+    isNarrowViewport = true;
+
+    const narrowSession: SessionRecord = {
+      ...sessionAlpha,
+      cwd: "/workspaces/这是一个非常长的项目目录名称用于验证窄窗口下的截断显示/CodexMM",
+    };
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ sessions: [narrowSession] }));
+
+    renderAppWithLocale();
+
+    const projectToggle = await screen.findByRole("button", {
+      name: "切换项目 /workspaces/这是一个非常长的项目目录名称用于验证窄窗口下的截断显示/CodexMM",
+    });
+    const projectGroup = screen.getByTestId(
+      `project-group-${narrowSession.cwd}`,
+    );
+    const projectName = within(projectToggle).getByTestId("sidebar-project-name");
+    const projectPath = within(projectToggle).getByTestId("sidebar-project-path");
+
+    expect(projectGroup).toHaveStyle({ top: "0px", height: "48px", transform: "translateY(0px)" });
+    expect(projectName).toHaveAttribute("title", "CodexMM");
+    expect(projectPath).toHaveAttribute("title", narrowSession.cwd);
+
+    fireEvent.click(projectToggle);
+
+    const sessionRow = await screen.findByTestId(`session-row-${narrowSession.id}`);
+    expect(sessionRow).toHaveStyle({
+      top: "0px",
+      height: "44px",
+      transform: "translateY(48px)",
+    });
   });
 
   test("renders independent desktop scroll containers for the sidebar list and detail content", async () => {
@@ -609,6 +666,38 @@ describe("App", () => {
     expect(
       screen.getByText("session-alpha-sibling: 会话文件正在被占用，稍后再试。"),
     ).toBeInTheDocument();
+  });
+
+  test("localizes dynamic batch failures from structured details instead of server prose", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ sessions: [sessionAlpha, sessionAlphaSibling] }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          records: [{ ...sessionAlpha, status: "deleted_pending_purge" }],
+          failures: [
+            {
+              sessionId: "session-alpha-sibling",
+              code: "managed_session_path_outside",
+              details: { label: "archive" },
+              error: "server prose drifted",
+            },
+          ],
+        }),
+      );
+
+    renderAppWithLocale();
+
+    fireEvent.click(await screen.findByRole("button", { name: "切换项目 /work/project-alpha" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择项目 /work/project-alpha" }));
+    fireEvent.click(screen.getByRole("button", { name: "移到回收站" }));
+
+    expect(await screen.findByText("以下会话处理失败：")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "session-alpha-sibling: 会话 archive 文件路径超出了受管目录，已拒绝继续操作。",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/server prose drifted/)).not.toBeInTheDocument();
   });
 
   test("keeps failed sessions visible after a partially failed trash purge", async () => {
@@ -842,7 +931,11 @@ describe("App", () => {
       .mockResolvedValueOnce(jsonResponse({ sessions: [sessionAlpha] }))
       .mockResolvedValueOnce(jsonResponse(alphaDetail))
       .mockResolvedValueOnce(
-        errorResponse(400, "目标项目目录不存在，请先创建后再恢复。"),
+        errorResponse(
+          400,
+          "目标项目目录不存在，请先创建后再恢复。",
+          "restore_target_missing_directory",
+        ),
       );
 
     renderAppWithLocale();
@@ -860,12 +953,16 @@ describe("App", () => {
     expect(screen.queryByText(/{"error":/)).not.toBeInTheDocument();
   });
 
-  test("localizes known server validation errors in English", async () => {
+  test("localizes known restore target errors from code even when server copy changes", async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ sessions: [sessionAlpha] }))
       .mockResolvedValueOnce(jsonResponse(alphaDetail))
       .mockResolvedValueOnce(
-        errorResponse(400, "目标项目目录不存在，请先创建后再恢复。"),
+        errorResponse(
+          400,
+          "The server changed this copy, but the client should trust the catalog code.",
+          "restore_target_missing_directory",
+        ),
       );
 
     renderAppWithoutLocale();
@@ -882,7 +979,51 @@ describe("App", () => {
         "The target project directory does not exist. Create it before restoring.",
       ),
     ).toBeInTheDocument();
-    expect(screen.queryByText("目标项目目录不存在，请先创建后再恢复。")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        "The server changed this copy, but the client should trust the catalog code.",
+      ),
+    ).not.toBeInTheDocument();
+  });
+
+  test("keeps the legacy raw server message when code and details are unavailable", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ sessions: [sessionAlpha] }))
+      .mockResolvedValueOnce(jsonResponse(alphaDetail))
+      .mockResolvedValueOnce(
+        errorResponse(400, "服务器仍在使用旧版错误文案，请稍后再试。"),
+      );
+
+    renderAppWithLocale();
+
+    fireEvent.click(await screen.findByRole("button", { name: "切换项目 /work/project-alpha" }));
+    fireEvent.click(await screen.findByRole("button", { name: /请帮我恢复这个项目的会话/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "恢复到目录" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "服务器仍在使用旧版错误文案，请稍后再试。",
+    );
+  });
+
+  test("localizes unknown-session detail errors from structured details instead of raw message", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ sessions: [sessionAlpha] }))
+      .mockResolvedValueOnce(
+        errorResponse(
+          404,
+          "server prose drifted",
+          "unknown_session",
+          { sessionId: "session-alpha" },
+        ),
+      );
+
+    renderAppWithLocale();
+
+    fireEvent.click(await screen.findByRole("button", { name: "切换项目 /work/project-alpha" }));
+    fireEvent.click(await screen.findByRole("button", { name: /请帮我恢复这个项目的会话/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("未知会话：session-alpha");
+    expect(screen.queryByText("server prose drifted")).not.toBeInTheDocument();
   });
 
   test("debounces remote search requests through the sessions API", async () => {
@@ -918,6 +1059,65 @@ describe("App", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  test("keeps the latest search filter after a batch action settles", async () => {
+    const batchTrashResponse = deferred<Response>();
+
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+
+      if (url === "/api/sessions/rescan") {
+        return jsonResponse({ sessions: [sessionAlpha, sessionBeta] });
+      }
+
+      if (
+        url === "/api/sessions/batch/trash" &&
+        init?.method === "POST"
+      ) {
+        return batchTrashResponse.promise;
+      }
+
+      if (url === "/api/sessions?query=beta&status=active") {
+        return jsonResponse({ sessions: [sessionBeta] });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    renderAppWithLocale();
+
+    fireEvent.click(await screen.findByRole("button", { name: "切换项目 /work/project-alpha" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择项目 /work/project-alpha" }));
+    fireEvent.click(screen.getByRole("button", { name: "移到回收站" }));
+
+    vi.useFakeTimers();
+
+    try {
+      fireEvent.change(screen.getByRole("textbox", { name: "搜索会话、路径或摘要" }), {
+        target: { value: "beta" },
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(200);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(await screen.findByRole("button", { name: "切换项目 /work/project-beta" })).toBeInTheDocument();
+
+    batchTrashResponse.resolve(
+      jsonResponse({
+        records: [{ ...sessionAlpha, status: "deleted_pending_purge" }],
+        failures: [],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "切换项目 /work/project-beta" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "切换项目 /work/project-alpha" })).not.toBeInTheDocument();
+    });
   });
 
   test("ignores stale detail responses when switching sessions quickly", async () => {
@@ -999,38 +1199,92 @@ describe("App", () => {
     expect(screen.getByText("已加载 205 / 205 条")).toBeInTheDocument();
   });
 
-  test("switches between the mobile session list and detail view with a back action", async () => {
+  test("switches between the mobile session list and detail view without losing sidebar state", async () => {
     isNarrowViewport = true;
     fetchMock
-      .mockResolvedValueOnce(jsonResponse({ sessions: [sessionAlpha] }))
+      .mockResolvedValueOnce(jsonResponse({ sessions: [sessionAlpha, sessionAlphaSibling] }))
       .mockResolvedValueOnce(jsonResponse(alphaDetail));
 
     renderAppWithLocale();
 
     fireEvent.click(await screen.findByRole("button", { name: "切换项目 /work/project-alpha" }));
     expect(screen.getByTestId("session-sidebar")).toBeInTheDocument();
+    expect(
+      screen
+        .getByTestId("session-sidebar")
+        .closest(".app-workspace__sidebar-shell"),
+    ).toHaveAttribute("data-mobile-hidden", "false");
     expect(screen.queryByRole("button", { name: "返回列表" })).not.toBeInTheDocument();
+
+    const sidebarScroll = screen.getByTestId("session-sidebar-scroll");
+    Object.defineProperty(sidebarScroll, "scrollTop", {
+      value: 120,
+      writable: true,
+    });
+    fireEvent.scroll(sidebarScroll, { target: { scrollTop: 120 } });
 
     fireEvent.click(screen.getByRole("button", { name: /请帮我恢复这个项目的会话/i }));
 
     expect(await screen.findByRole("button", { name: "返回列表" })).toBeInTheDocument();
-    expect(screen.queryByTestId("session-sidebar")).not.toBeInTheDocument();
+    expect(screen.getByTestId("session-sidebar")).toBeInTheDocument();
+    expect(
+      screen
+        .getByTestId("session-sidebar")
+        .closest(".app-workspace__sidebar-shell"),
+    ).toHaveAttribute("data-mobile-hidden", "true");
     expect(screen.getByText("shell · rg --files")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "返回列表" }));
 
     expect(await screen.findByTestId("session-sidebar")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "返回列表" })).not.toBeInTheDocument();
+    expect(
+      screen
+        .getByTestId("session-sidebar")
+        .closest(".app-workspace__sidebar-shell"),
+    ).toHaveAttribute("data-mobile-hidden", "false");
+    expect(
+      screen
+        .getByRole("button", { name: "返回列表" })
+        .closest(".app-workspace__detail-shell"),
+    ).toHaveAttribute("data-mobile-hidden", "true");
+    expect(screen.getByRole("button", { name: /请继续整理这个项目的历史会话/i })).toBeInTheDocument();
+    expect((screen.getByTestId("session-sidebar-scroll") as HTMLDivElement).scrollTop).toBe(120);
+  });
+
+  test("virtualizes a large expanded project list so rendered rows stay bounded", async () => {
+    const manySessions = Array.from({ length: 1200 }, (_, index) => ({
+      ...sessionAlpha,
+      id: `session-virtual-${index + 1}`,
+      filePath: `/tmp/example-home/.codex/sessions/2026/03/29/session-virtual-${index + 1}.jsonl`,
+      activePath: `/tmp/example-home/.codex/sessions/2026/03/29/session-virtual-${index + 1}.jsonl`,
+      originalRelativePath: `2026/03/29/session-virtual-${index + 1}.jsonl`,
+      startedAt: new Date(
+        Date.parse("2026-03-29T10:16:37.087Z") + index * 1000,
+      ).toISOString(),
+      userPromptExcerpt: `大型虚拟列表会话 ${index + 1}`,
+      latestAgentMessageExcerpt: `虚拟列表预览 ${index + 1}`,
+    }));
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ sessions: manySessions }));
+
+    renderAppWithLocale();
+
+    fireEvent.click(await screen.findByRole("button", { name: "切换项目 /work/project-alpha" }));
+
+    await waitFor(() => {
+      expect(screen.queryAllByTestId(/session-row-/)).not.toHaveLength(0);
+    });
+    expect(screen.queryAllByTestId(/session-row-/).length).toBeLessThan(40);
   });
 });
 
 function renderAppWithLocale(locale: UiLanguage = "zh") {
-  window.localStorage.setItem(LOCALE_STORAGE_KEY, locale);
+  window.__CODEX_VIEWER_UI_CONFIG__ = { language: locale };
   return render(<App />);
 }
 
 function renderAppWithoutLocale() {
-  window.localStorage.removeItem(LOCALE_STORAGE_KEY);
+  window.__CODEX_VIEWER_UI_CONFIG__ = { language: "en" };
   return render(<App />);
 }
 
@@ -1042,12 +1296,17 @@ function jsonResponse(payload: unknown): Response {
   } as Response;
 }
 
-function errorResponse(status: number, message: string): Response {
+function errorResponse(
+  status: number,
+  message: string,
+  code?: ApiErrorCode,
+  details?: Record<string, unknown>,
+): Response {
   return {
     ok: false,
     status,
-    json: async () => ({ error: message }),
-    text: async () => JSON.stringify({ error: message }),
+    json: async () => ({ code, error: message, details }),
+    text: async () => JSON.stringify({ code, error: message, details }),
   } as Response;
 }
 

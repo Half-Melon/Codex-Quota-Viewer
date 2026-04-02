@@ -86,13 +86,25 @@ enum SessionManagerLaunchError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .bundleResourcesMissing:
-            return "Bundled session manager is missing. Rebuild CodexQuotaViewer.app."
+            return AppLocalization.localized(
+                en: "Bundled session manager is missing. Rebuild CodexQuotaViewer.app.",
+                zh: "内置 Session Manager 缺失，请重新构建 CodexQuotaViewer.app。"
+            )
         case .appFilesMissing:
-            return "Bundled session manager files are incomplete. Rebuild CodexQuotaViewer.app."
+            return AppLocalization.localized(
+                en: "Bundled session manager files are incomplete. Rebuild CodexQuotaViewer.app.",
+                zh: "内置 Session Manager 文件不完整，请重新构建 CodexQuotaViewer.app。"
+            )
         case .runtimeMissing:
-            return "Bundled Node runtime is missing. Rebuild CodexQuotaViewer.app."
+            return AppLocalization.localized(
+                en: "Bundled Node runtime is missing. Rebuild CodexQuotaViewer.app.",
+                zh: "内置 Node 运行时缺失，请重新构建 CodexQuotaViewer.app。"
+            )
         case .browserOpenFailed:
-            return "Session manager is ready, but the default browser could not be opened."
+            return AppLocalization.localized(
+                en: "Session manager is ready, but the default browser could not be opened.",
+                zh: "Session Manager 已就绪，但无法打开默认浏览器。"
+            )
         case .startFailed(let diagnostics):
             return startFailureMessage(diagnostics: diagnostics)
         case .startupTimedOut(let diagnostics):
@@ -103,24 +115,36 @@ enum SessionManagerLaunchError: LocalizedError {
     private func startFailureMessage(diagnostics: String?) -> String {
         if let diagnostics = diagnostics?.lowercased() {
             if diagnostics.contains("eaddrinuse") || diagnostics.contains("address already in use") {
-                return "Session manager could not start because port 4318 is already in use."
+                return AppLocalization.localized(
+                    en: "Session manager could not start because port 4318 is already in use.",
+                    zh: "Session Manager 无法启动，因为 4318 端口已被占用。"
+                )
             }
 
             if diagnostics.contains("cannot find module") || diagnostics.contains("module not found") {
-                return "Bundled session manager files are incomplete. Rebuild CodexQuotaViewer.app."
+                return AppLocalization.localized(
+                    en: "Bundled session manager files are incomplete. Rebuild CodexQuotaViewer.app.",
+                    zh: "内置 Session Manager 文件不完整，请重新构建 CodexQuotaViewer.app。"
+                )
             }
         }
 
-        return "Session manager could not start."
+        return AppLocalization.localized(en: "Session manager could not start.", zh: "Session Manager 无法启动。")
     }
 
     private func startupTimeoutMessage(diagnostics: String?) -> String {
         if let diagnostics = diagnostics?.lowercased(),
            diagnostics.contains("eaddrinuse") || diagnostics.contains("address already in use") {
-            return "Session manager could not start because port 4318 is already in use."
+            return AppLocalization.localized(
+                en: "Session manager could not start because port 4318 is already in use.",
+                zh: "Session Manager 无法启动，因为 4318 端口已被占用。"
+            )
         }
 
-        return "Timed out while waiting for the session manager to start."
+        return AppLocalization.localized(
+            en: "Timed out while waiting for the session manager to start.",
+            zh: "等待 Session Manager 启动超时。"
+        )
     }
 }
 
@@ -129,6 +153,8 @@ final class SessionManagerLauncher {
     private let configuration: SessionManagerConfiguration
     private let healthChecker: SessionManagerHealthChecker
     private let fileManager: FileManager
+    private let uiConfigURL: URL?
+    private let defaultLanguageProvider: () -> ResolvedAppLanguage?
 
     private var launchedProcess: Process?
     private var processLogFileURL: URL?
@@ -136,7 +162,9 @@ final class SessionManagerLauncher {
 
     init(
         urlSession: URLSession = .shared,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        uiConfigURL: URL? = nil,
+        defaultLanguageProvider: @escaping () -> ResolvedAppLanguage? = { nil }
     ) {
         let configuration = SessionManagerConfiguration.default
         self.configuration = configuration
@@ -145,13 +173,16 @@ final class SessionManagerLauncher {
             urlSession: urlSession
         )
         self.fileManager = fileManager
+        self.uiConfigURL = uiConfigURL
+        self.defaultLanguageProvider = defaultLanguageProvider
     }
 
-    func openSessionManagerInBrowser() async throws -> SessionManagerLaunchResult {
+    var serviceBaseURL: URL {
+        configuration.baseURL
+    }
+
+    func ensureServiceRunning() async throws -> SessionManagerLaunchResult {
         if await healthChecker.isHealthy() {
-            guard NSWorkspace.shared.open(configuration.baseURL) else {
-                throw SessionManagerLaunchError.browserOpenFailed
-            }
             return .reusedExistingService
         }
 
@@ -160,11 +191,16 @@ final class SessionManagerLauncher {
         }
 
         try await waitUntilHealthy()
+        return .startedBundledService
+    }
+
+    func openSessionManagerInBrowser() async throws -> SessionManagerLaunchResult {
+        let result = try await ensureServiceRunning()
 
         guard NSWorkspace.shared.open(configuration.baseURL) else {
             throw SessionManagerLaunchError.browserOpenFailed
         }
-        return .startedBundledService
+        return result
     }
 
     func stopManagedProcess() {
@@ -202,6 +238,12 @@ final class SessionManagerLauncher {
         var environment = ProcessInfo.processInfo.environment
         environment["NODE_ENV"] = "production"
         environment["PORT"] = "\(configuration.port)"
+        if let uiConfigURL {
+            environment["CODEX_VIEWER_UI_CONFIG_PATH"] = uiConfigURL.path
+        }
+        if let defaultLanguage = defaultLanguageProvider()?.rawValue {
+            environment["CODEX_VIEWER_DEFAULT_LANGUAGE"] = defaultLanguage
+        }
 
         let process = Process()
         process.executableURL = layout.runtimeNodeURL
@@ -268,7 +310,7 @@ final class SessionManagerLauncher {
 
     private func readStartupDiagnostics() -> String? {
         guard let processLogFileURL,
-              let contents = try? String(contentsOf: processLogFileURL),
+              let contents = try? String(contentsOf: processLogFileURL, encoding: .utf8),
               !contents.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }

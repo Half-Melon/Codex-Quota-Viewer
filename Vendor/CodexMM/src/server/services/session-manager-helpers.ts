@@ -2,8 +2,8 @@ import { access, copyFile, readdir } from "node:fs/promises";
 import path from "node:path";
 
 import type { SessionRecord } from "../../shared/contracts";
-import { shellQuote } from "../lib/paths";
-import { parseSessionFile } from "./jsonl-session-parser";
+import { ensureInsideRealpath, shellQuote } from "../lib/paths";
+import { parseSessionCatalog } from "./jsonl-session-parser";
 
 const SESSION_SCAN_CONCURRENCY = 16;
 
@@ -11,7 +11,7 @@ export async function collectSessions(root: string) {
   const files = await walkJsonlFiles(root);
   const entries: Array<{
     filePath: string;
-    summary: Awaited<ReturnType<typeof parseSessionFile>>;
+    parsed: Awaited<ReturnType<typeof parseSessionCatalog>>;
   }> = [];
   let nextIndex = 0;
 
@@ -26,17 +26,23 @@ export async function collectSessions(root: string) {
           continue;
         }
 
+        try {
+          await ensureInsideRealpath(root, filePath);
+        } catch {
+          continue;
+        }
+
         entries.push({
           filePath,
-          summary: await parseSessionFile(filePath),
+          parsed: await parseSessionCatalog(filePath),
         });
       }
     }),
   );
 
   return entries.filter(
-    (entry): entry is { filePath: string; summary: NonNullable<typeof entry.summary> } =>
-      entry.summary !== null,
+    (entry): entry is { filePath: string; parsed: NonNullable<typeof entry.parsed> } =>
+      entry.parsed !== null,
   );
 }
 
@@ -53,6 +59,12 @@ export function resolveSessionRelativePath(
   record: Pick<SessionRecord, "originalRelativePath" | "startedAt" | "id">,
 ) {
   return record.originalRelativePath ?? buildFallbackRelativePath(record.startedAt, record.id);
+}
+
+export function uniqueSessionIds(
+  sessionIds: Array<string | null | undefined>,
+) {
+  return [...new Set(sessionIds.filter((sessionId): sessionId is string => Boolean(sessionId)))];
 }
 
 export function looksCanonicalSessionRelativePath(relativePath: string, sessionId: string) {

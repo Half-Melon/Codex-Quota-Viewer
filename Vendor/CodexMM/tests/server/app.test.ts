@@ -1,10 +1,12 @@
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
+import Database from "better-sqlite3";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
-import { createApp } from "../../src/server/app";
+import { createApp, createUiConfigReader } from "../../src/server/app";
 import {
   createHarness,
   readOfficialThread,
@@ -45,6 +47,18 @@ describe("createApp", () => {
     expect(response.body.sessions[0].id).toBe("http-list");
   });
 
+  test("returns ui-config with the resolved global language", async () => {
+    const app = createApp({
+      codexHome: harness.codexHome,
+      managerHome: harness.managerHome,
+      readUiConfig: () => ({ language: "zh" }),
+    });
+
+    const response = await request(app).get("/api/ui-config").expect(200);
+
+    expect(response.body).toEqual({ language: "zh" });
+  });
+
   test("restores a session and returns a resume command", async () => {
     const projectDir = path.join(harness.managerHome, "resume-target");
     await seedSession(harness.codexHome, {
@@ -75,6 +89,56 @@ describe("createApp", () => {
       `codex resume http-restore -C ${projectDir}`,
     );
     expect(response.body.record.status).toBe("active");
+  });
+
+  test("returns managed session path errors with structured details over HTTP", async () => {
+    await seedSession(harness.codexHome, {
+      id: "http-archive-escape",
+      cwd: "/work/http-archive-escape",
+      startedAt: "2026-03-29T10:16:37.087Z",
+      firstUserMessage: "HTTP 归档路径不能越界",
+      latestAgentMessage: "接口应该返回结构化错误细节。",
+    });
+
+    const app = createApp({
+      codexHome: harness.codexHome,
+      managerHome: harness.managerHome,
+    });
+
+    await request(app).post("/api/sessions/rescan").send({}).expect(200);
+
+    const db = new Database(path.join(harness.managerHome, "index.db"));
+    db.prepare(
+      `
+        update sessions
+        set original_relative_path = ?
+        where id = ?
+      `,
+    ).run("../../escape.jsonl", "http-archive-escape");
+    db.close();
+
+    const managedRoot = path.join(harness.codexHome, "archived_sessions");
+    const candidatePath = path.join(managedRoot, "../../escape.jsonl");
+    const resolvedManagedRoot = await realpath(managedRoot);
+    const resolvedCandidatePath = path.join(
+      await realpath(path.dirname(candidatePath)),
+      path.basename(candidatePath),
+    );
+    const response = await request(app)
+      .post("/api/sessions/http-archive-escape/archive")
+      .send({})
+      .expect(400);
+
+    expect(response.body).toMatchObject({
+      code: "managed_session_path_outside",
+      error: "会话 archive 文件路径超出了受管目录，已拒绝继续操作。",
+      details: {
+        label: "archive",
+        managedRoot: resolvedManagedRoot,
+        candidatePath,
+        resolvedCandidatePath,
+      },
+    });
   });
 
   test("returns paginated timeline data over HTTP", async () => {
@@ -118,6 +182,22 @@ describe("createApp", () => {
       text: "timeline-201",
     });
     expect(nextPageResponse.body.nextOffset).toBeNull();
+  });
+
+  test("returns structured details for unknown sessions over HTTP", async () => {
+    const app = createApp({
+      codexHome: harness.codexHome,
+      managerHome: harness.managerHome,
+    });
+
+    await request(app).post("/api/sessions/rescan").send({}).expect(200);
+    const response = await request(app).get("/api/sessions/missing-session").expect(404);
+
+    expect(response.body).toEqual({
+      code: "unknown_session",
+      error: "Unknown session: missing-session",
+      details: { sessionId: "missing-session" },
+    });
   });
 
   test("creates manager storage automatically when it does not exist", async () => {
@@ -236,6 +316,7 @@ describe("createApp", () => {
       .expect(400);
 
     expect(response.body).toEqual({
+      code: "restore_target_missing_directory",
       error: "目标项目目录不存在，请先创建后再恢复。",
     });
   });
@@ -267,6 +348,7 @@ describe("createApp", () => {
       .expect(400);
 
     expect(response.body).toEqual({
+      code: "restore_target_not_directory",
       error: "目标项目目录不是文件夹，请重新选择目录。",
     });
   });
@@ -300,6 +382,7 @@ describe("createApp", () => {
         .expect(400);
 
       expect(response.body).toEqual({
+        code: "restore_target_permission_denied",
         error: "当前没有权限访问目标项目目录，请检查目录权限。",
       });
     } finally {
@@ -331,7 +414,63 @@ describe("createApp", () => {
       .expect(400);
 
     expect(response.body).toEqual({
+      code: "unsupported_restore_mode",
       error: "不支持的恢复模式，请刷新页面后重试。",
     });
   });
 });
+
+describe("createUiConfigReader", () => {
+  test("falls back to the bundled default language when ui-config is unavailable", async () => {
+    const previousUiConfigPath = process.env.CODEX_VIEWER_UI_CONFIG_PATH;
+    const previousDefaultLanguage = process.env.CODEX_VIEWER_DEFAULT_LANGUAGE;
+    const previousLang = process.env.LANG;
+    const previousLcAll = process.env.LC_ALL;
+
+    delete process.env.CODEX_VIEWER_UI_CONFIG_PATH;
+    process.env.CODEX_VIEWER_DEFAULT_LANGUAGE = "zh";
+    process.env.LANG = "en_US.UTF-8";
+    process.env.LC_ALL = "";
+
+    try {
+      expect(createUiConfigReader()()).toEqual({ language: "zh" });
+    } finally {
+      restoreEnv("CODEX_VIEWER_UI_CONFIG_PATH", previousUiConfigPath);
+      restoreEnv("CODEX_VIEWER_DEFAULT_LANGUAGE", previousDefaultLanguage);
+      restoreEnv("LANG", previousLang);
+      restoreEnv("LC_ALL", previousLcAll);
+    }
+  });
+
+  test("uses the bundled default language when the ui-config payload is invalid", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "codex-ui-config-"));
+    const uiConfigPath = path.join(tempDir, "session-manager-ui.json");
+    const previousUiConfigPath = process.env.CODEX_VIEWER_UI_CONFIG_PATH;
+    const previousDefaultLanguage = process.env.CODEX_VIEWER_DEFAULT_LANGUAGE;
+    const previousLang = process.env.LANG;
+    const previousLcAll = process.env.LC_ALL;
+
+    await writeFile(uiConfigPath, "{invalid json");
+    process.env.CODEX_VIEWER_UI_CONFIG_PATH = uiConfigPath;
+    process.env.CODEX_VIEWER_DEFAULT_LANGUAGE = "zh";
+    process.env.LANG = "en_US.UTF-8";
+    process.env.LC_ALL = "";
+
+    try {
+      expect(createUiConfigReader()()).toEqual({ language: "zh" });
+    } finally {
+      restoreEnv("CODEX_VIEWER_UI_CONFIG_PATH", previousUiConfigPath);
+      restoreEnv("CODEX_VIEWER_DEFAULT_LANGUAGE", previousDefaultLanguage);
+      restoreEnv("LANG", previousLang);
+      restoreEnv("LC_ALL", previousLcAll);
+    }
+  });
+});
+
+function restoreEnv(key: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[key];
+    return;
+  }
+  process.env[key] = value;
+}

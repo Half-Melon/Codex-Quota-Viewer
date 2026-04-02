@@ -1,5 +1,6 @@
 import type {
   OfficialRepairStats,
+  SessionOfficialIssueCode,
   SessionOfficialState,
   SessionRecord,
 } from "../../shared/contracts";
@@ -15,8 +16,8 @@ import {
 import { readSessionMetaSnapshot } from "./jsonl-session-parser";
 import { pathExists } from "./session-manager-helpers";
 
-const DEFAULT_SANDBOX_POLICY = JSON.stringify({ type: "danger-full-access" });
-const DEFAULT_APPROVAL_MODE = "never";
+const DEFAULT_SANDBOX_POLICY = "workspace-write";
+const DEFAULT_APPROVAL_MODE = "default";
 
 export class CodexOfficialThreadBridge {
   private readonly threads: CodexThreadStateRepository;
@@ -33,24 +34,15 @@ export class CodexOfficialThreadBridge {
     const desired = buildDesiredProjection(record);
 
     if (!desired) {
-      const issues = [
-        thread ? "官方 threads 里仍然保留了这条仅剩备份的线程。" : null,
-        indexEntry ? "官方 recent 列表里仍然保留了这条仅剩备份的线程。" : null,
-      ].filter((issue): issue is string => Boolean(issue));
+      const issueCodes = [
+        thread ? "snapshot_thread_still_present" : null,
+        indexEntry ? "snapshot_recent_conversation_still_present" : null,
+      ].filter((issue): issue is SessionOfficialIssueCode => Boolean(issue));
 
       return {
-        status: issues.length > 0 ? "repair_needed" : "hidden",
+        status: issueCodes.length > 0 ? "repair_needed" : "hidden",
         canAppearInCodex: false,
-        threadRowPresent: Boolean(thread),
-        sessionIndexPresent: Boolean(indexEntry),
-        rolloutPathMatches: !thread,
-        archivedFlagMatches: !thread,
-        sessionIndexMatches: !indexEntry,
-        summary:
-          issues.length > 0
-            ? "这条会话只剩 snapshot 备份，当前不应继续出现在官方 Codex 列表中。"
-            : "这条会话只剩 snapshot 备份，当前已从官方 Codex 列表隐藏。",
-        issues,
+        issueCodes,
       };
     }
 
@@ -61,27 +53,18 @@ export class CodexOfficialThreadBridge {
     const sessionIndexMatches =
       indexEntry?.threadName === desired.threadName &&
       indexEntry.updatedAt === desired.updatedAt;
-    const issues = [
-      !threadRowPresent ? "官方 threads 缺少这条线程记录。" : null,
-      threadRowPresent && !rolloutPathMatches ? "官方 rollout_path 指向了错误位置。" : null,
-      threadRowPresent && !archivedFlagMatches ? "官方 archived 标记与当前状态不一致。" : null,
-      !sessionIndexPresent ? "官方 recent conversations 缺少这条索引。" : null,
-      sessionIndexPresent && !sessionIndexMatches ? "官方 recent conversations 的标题或更新时间过期了。" : null,
-    ].filter((issue): issue is string => Boolean(issue));
+    const issueCodes = [
+      !threadRowPresent ? "missing_thread" : null,
+      threadRowPresent && !rolloutPathMatches ? "wrong_rollout_path" : null,
+      threadRowPresent && !archivedFlagMatches ? "archived_flag_mismatch" : null,
+      !sessionIndexPresent ? "missing_recent_conversation" : null,
+      sessionIndexPresent && !sessionIndexMatches ? "stale_recent_conversation" : null,
+    ].filter((issue): issue is SessionOfficialIssueCode => Boolean(issue));
 
     return {
-      status: issues.length > 0 ? "repair_needed" : "synced",
+      status: issueCodes.length > 0 ? "repair_needed" : "synced",
       canAppearInCodex: true,
-      threadRowPresent,
-      sessionIndexPresent,
-      rolloutPathMatches,
-      archivedFlagMatches,
-      sessionIndexMatches,
-      summary:
-        issues.length > 0
-          ? "这条会话在官方 Codex 的本地线程状态还没有完全同步。"
-          : "这条会话已经同步到官方 Codex 的 threads 和 recent conversations。",
-      issues,
+      issueCodes,
     };
   }
 

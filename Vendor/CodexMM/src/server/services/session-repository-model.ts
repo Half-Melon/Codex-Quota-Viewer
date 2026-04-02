@@ -2,7 +2,9 @@ import type {
   AuditEntry,
   SessionRecord,
   SessionStatus,
+  SessionTimelineItem,
 } from "../../shared/contracts";
+import type { SessionFileSummary } from "./jsonl-session-parser";
 
 export type SessionRow = Omit<SessionRecord, "createdAt" | "updatedAt" | "indexedAt"> & {
   created_at: string;
@@ -18,6 +20,28 @@ export type AuditRow = {
   target_path: string | null;
   details_json: string;
   created_at: string;
+};
+
+export type TimelineItemRow = {
+  item_id: string;
+  type: string;
+  timestamp: string;
+  text: string | null;
+  tool_name: string | null;
+  summary: string | null;
+  input_text: string | null;
+  output_text: string | null;
+  status: string | null;
+};
+
+export type CatalogSessionEntry = {
+  summary: SessionFileSummary;
+  timeline: SessionTimelineItem[];
+  activePath: string | null;
+  archivePath: string | null;
+  snapshotPath: string | null;
+  originalRelativePath: string | null;
+  status: SessionStatus;
 };
 
 export type SessionMutation = Partial<
@@ -79,5 +103,33 @@ export function mapAuditRow(row: AuditRow): AuditEntry {
     targetPath: row.target_path,
     details: JSON.parse(row.details_json) as Record<string, string | boolean | null>,
     createdAt: row.created_at,
+  };
+}
+
+export function mapTimelineItemRow(row: TimelineItemRow): SessionTimelineItem {
+  if (row.type === "tool_call") {
+    return {
+      id: row.item_id,
+      type: "tool_call",
+      timestamp: row.timestamp,
+      toolName: row.tool_name ?? "unknown_tool",
+      summary: row.summary ?? row.tool_name ?? "unknown_tool",
+      input: row.input_text ?? "",
+      output: row.output_text ?? "",
+      status:
+        row.status === "errored" || row.status === "completed"
+          ? row.status
+          : "pending",
+    };
+  }
+
+  return {
+    id: row.item_id,
+    type:
+      row.type === "message:assistant"
+        ? "message:assistant"
+        : "message:user",
+    timestamp: row.timestamp,
+    text: row.text ?? "",
   };
 }

@@ -9,7 +9,7 @@ export type RestoreTargetErrorKey =
 
 export type AuditActionKey = "archive" | "delete" | "restore" | "purge";
 
-type TranslationSet = {
+export type TranslationSet = {
   languageNames: Record<UiLanguage, string>;
   topbar: {
     title: string;
@@ -136,11 +136,9 @@ export type I18nValue = {
   language: UiLanguage;
   locale: string;
   copy: TranslationSet;
-  setLanguage: (language: UiLanguage) => void;
 };
 
 export const DEFAULT_LANGUAGE: UiLanguage = "en";
-export const LOCALE_STORAGE_KEY = "codex-session-manager.locale";
 
 const LOCALE_BY_LANGUAGE: Record<UiLanguage, string> = {
   en: "en-US",
@@ -474,19 +472,6 @@ export function isUiLanguage(value: string | null | undefined): value is UiLangu
   return value === "en" || value === "zh";
 }
 
-export function readStoredLanguage() {
-  if (typeof window === "undefined") {
-    return DEFAULT_LANGUAGE;
-  }
-
-  try {
-    const storedLanguage = window.localStorage.getItem(LOCALE_STORAGE_KEY);
-    return isUiLanguage(storedLanguage) ? storedLanguage : DEFAULT_LANGUAGE;
-  } catch {
-    return DEFAULT_LANGUAGE;
-  }
-}
-
 export function useI18n() {
   const value = useContext(I18nContext);
 
@@ -496,5 +481,3 @@ export function useI18n() {
 
   return value;
 }
-
-export type { TranslationSet };

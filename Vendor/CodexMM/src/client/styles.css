@@ -48,7 +48,7 @@ body {
     radial-gradient(circle at bottom left, rgba(255, 255, 255, 0.03), transparent 24%),
     linear-gradient(180deg, #1d1d1c 0%, #191919 100%);
   color: var(--text);
-  font-size: 14px;
+  font-size: 16px;
   line-height: 1.5;
   overflow: hidden;
 }
@@ -121,55 +121,20 @@ input::placeholder {
 }
 
 .app-topbar__title span {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-tertiary);
 }
 
 .app-topbar__stats span {
   display: inline-flex;
   align-items: center;
-  min-height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.03);
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.app-language-switcher {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
-  padding: 4px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.app-language-button {
-  min-height: 30px;
+  min-height: 36px;
   padding: 0 12px;
-  border: 0;
+  border: 1px solid var(--line);
   border-radius: 999px;
-  background: transparent;
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 13px;
   color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition:
-    background 140ms ease,
-    color 140ms ease;
-}
-
-.app-language-button:hover {
-  color: var(--text);
-}
-
-.app-language-button--active {
-  background: rgba(151, 168, 191, 0.16);
-  color: var(--text);
 }
 
 .app-banner,
@@ -179,7 +144,7 @@ input::placeholder {
   border-radius: 14px;
   background: rgba(34, 34, 33, 0.94);
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
 }
 
@@ -276,15 +241,15 @@ input::placeholder {
 }
 
 .compact-button {
-  min-height: 34px;
-  padding: 0 12px;
+  min-height: 40px;
+  padding: 0 14px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface-raised);
   color: var(--text);
   cursor: pointer;
-  line-height: 32px;
-  font-size: 12px;
+  line-height: 38px;
+  font-size: 13px;
   font-weight: 550;
   white-space: nowrap;
   transition:
@@ -323,47 +288,53 @@ input::placeholder {
 
 @media (max-width: 767px) {
   body {
-    overflow: auto;
+    overflow: hidden;
   }
 
   .app-shell {
-    height: auto;
-    min-height: 100vh;
+    height: 100%;
+    min-height: 100%;
     padding: 10px;
     gap: 10px;
-    overflow: visible;
+    overflow: hidden;
   }
 
   .app-topbar {
     align-items: flex-start;
   }
 
-  .app-language-switcher {
-    margin-left: 0;
+  .app-topbar__stats span {
+    min-height: 40px;
   }
 
   .app-workspace {
-    overflow: visible;
+    overflow: hidden;
   }
 
   .app-workspace__inner {
     display: block;
-    height: auto;
+    height: 100%;
+    min-height: 0;
   }
 
   .app-workspace__sidebar-shell {
-    width: min(var(--sidebar-width), 100%);
-    margin: 0 auto;
+    width: 100%;
+    margin: 0;
   }
 
   .app-workspace__sidebar-shell,
   .app-workspace__detail-shell {
-    height: auto;
-    min-height: auto;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .app-workspace__sidebar-shell[data-mobile-hidden="true"],
+  .app-workspace__detail-shell[data-mobile-hidden="true"] {
+    display: none;
   }
 
   .compact-button {
-    min-height: 36px;
-    line-height: 34px;
+    min-height: 44px;
+    line-height: 42px;
   }
 }

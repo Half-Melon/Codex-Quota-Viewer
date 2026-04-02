@@ -4,6 +4,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: AppController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        installApplicationMainMenu(app: NSApp)
         controller = AppController()
         controller?.start()
     }

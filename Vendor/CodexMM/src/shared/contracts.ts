@@ -57,16 +57,19 @@ export type SessionTimelineItem =
       status: "pending" | "completed" | "errored";
     };
 
+export type SessionOfficialIssueCode =
+  | "missing_thread"
+  | "wrong_rollout_path"
+  | "archived_flag_mismatch"
+  | "missing_recent_conversation"
+  | "stale_recent_conversation"
+  | "snapshot_thread_still_present"
+  | "snapshot_recent_conversation_still_present";
+
 export type SessionOfficialState = {
   status: "synced" | "repair_needed" | "hidden";
   canAppearInCodex: boolean;
-  threadRowPresent: boolean;
-  sessionIndexPresent: boolean;
-  rolloutPathMatches: boolean;
-  archivedFlagMatches: boolean;
-  sessionIndexMatches: boolean;
-  summary: string;
-  issues: string[];
+  issueCodes: SessionOfficialIssueCode[];
 };
 
 export type SessionDetail = {
@@ -92,6 +95,36 @@ export type SessionFilters = {
 
 export type RestoreMode = "resume_only" | "rebind_cwd";
 
+export type ApiErrorCode =
+  | "active_session_cannot_be_archived"
+  | "active_session_must_be_deleted_before_purge"
+  | "internal_server_error"
+  | "managed_session_path_outside"
+  | "path_outside_managed_root"
+  | "rebind_requires_target"
+  | "restore_target_missing_directory"
+  | "restore_target_not_directory"
+  | "restore_target_permission_denied"
+  | "session_has_no_file_to_delete"
+  | "session_is_not_restorable"
+  | "unknown_server_error"
+  | "unknown_session"
+  | "unsupported_restore_mode";
+
+export type ApiErrorDetails = {
+  sessionId?: string;
+  label?: "active" | "archive" | "snapshot";
+  managedRoot?: string;
+  candidatePath?: string;
+  resolvedCandidatePath?: string;
+};
+
+export type ApiErrorResponse = {
+  code: ApiErrorCode;
+  error: string;
+  details?: ApiErrorDetails;
+};
+
 export type RestoreRequest = {
   sessionId: string;
   targetCwd?: string;
@@ -105,7 +138,9 @@ export type BatchSessionActionRequest = {
 
 export type BatchSessionActionFailure = {
   sessionId: string;
+  code?: ApiErrorCode;
   error: string;
+  details?: ApiErrorDetails;
 };
 
 export type BatchSessionActionResponse = {
@@ -124,4 +159,8 @@ export type OfficialRepairStats = {
 export type OfficialRepairResponse = {
   sessions: SessionRecord[];
   stats: OfficialRepairStats;
+};
+
+export type UiConfigResponse = {
+  language: "en" | "zh";
 };

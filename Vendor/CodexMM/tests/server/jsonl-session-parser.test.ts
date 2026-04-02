@@ -178,4 +178,80 @@ describe("parseSessionFile", () => {
       text: "再追加 response_item 里的助手消息",
     });
   });
+
+  test("keeps distinct event and response-item messages even when both roles appear in both sources", async () => {
+    const filePath = path.join(
+      harness.codexHome,
+      "sessions",
+      "2026",
+      "03",
+      "29",
+      "timeline-mixed-both-roles.jsonl",
+    );
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(
+      filePath,
+      [
+        JSON.stringify({
+          timestamp: "2026-03-29T10:16:37.087Z",
+          type: "session_meta",
+          payload: {
+            id: "timeline-mixed-both-roles",
+            timestamp: "2026-03-29T10:16:37.087Z",
+            cwd: "/work/timeline-mixed-both-roles",
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-29T10:16:38.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "event-user-1",
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-29T10:16:39.000Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_message",
+            message: "event-assistant-1",
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-29T10:16:40.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ text: "response-user-2" }],
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-29T10:16:41.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ text: "response-assistant-2" }],
+          },
+        }),
+      ].join("\n"),
+    );
+
+    const timeline = await parseSessionTimeline(filePath);
+
+    expect(timeline).toHaveLength(4);
+    expect(timeline.map((entry) => entry.type)).toEqual([
+      "message:user",
+      "message:assistant",
+      "message:user",
+      "message:assistant",
+    ]);
+    expect(timeline.map((entry) => ("text" in entry ? entry.text : ""))).toEqual([
+      "event-user-1",
+      "event-assistant-1",
+      "response-user-2",
+      "response-assistant-2",
+    ]);
+  });
 });
