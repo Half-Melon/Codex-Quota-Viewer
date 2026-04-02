@@ -42,12 +42,6 @@ This app is for you if any of these sound familiar:
   using terminal commands.
 - You want a packaged `.app`, not a pile of scripts.
 
-## Screenshots
-
-![Codex Quota Viewer menu screenshot](docs/images/menu-screenshot.png)
-
-![Codex Quota Viewer session manager screenshot](docs/images/session-manager-screenshot.png)
-
 ## Quick Start
 
 ### Install the app
