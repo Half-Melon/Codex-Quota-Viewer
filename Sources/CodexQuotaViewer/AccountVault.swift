@@ -221,7 +221,14 @@ final class VaultAccountStore {
 
         var recordsByID: [String: VaultAccountRecord] = [:]
         for directoryURL in directories {
-            guard let record = try loadRecord(at: directoryURL) else {
+            let record: VaultAccountRecord?
+            do {
+                record = try loadRecord(at: directoryURL)
+            } catch {
+                continue
+            }
+
+            guard let record else {
                 continue
             }
             recordsByID[record.id] = record

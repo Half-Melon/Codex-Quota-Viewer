@@ -1,0 +1,32 @@
+- main [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - strong [ref=e6]: Codex Sessions
+      - generic [ref=e7]: 0 indexed
+    - generic [ref=e8]:
+      - generic [ref=e9]: 0 Active
+      - generic [ref=e10]: 0 Archived
+      - generic [ref=e11]: 0 Trash
+  - generic [ref=e13]:
+    - complementary [ref=e15]:
+      - generic [ref=e16]:
+        - generic [ref=e17]:
+          - generic [ref=e18]: Projects
+          - generic [ref=e19]: 0 / 0
+        - generic [ref=e20]:
+          - button "Repair official threads" [disabled] [ref=e21]
+          - button "Refreshing..." [disabled] [ref=e22]
+      - generic [ref=e23]:
+        - textbox "Search sessions, paths, or excerpts" [ref=e24]
+        - tablist "Status filters" [ref=e25]:
+          - tab "Active" [selected] [ref=e26] [cursor=pointer]
+          - tab "Archived" [ref=e27] [cursor=pointer]
+          - tab "Trash" [ref=e28] [cursor=pointer]
+      - generic [ref=e30]: Scanning or filtering sessions...
+    - generic [ref=e32]:
+      - generic [ref=e33]:
+        - generic [ref=e34]:
+          - button "Select all" [disabled] [ref=e35]
+          - button "Clear" [disabled] [ref=e36]
+        - generic [ref=e37]: No batch selection
+      - generic [ref=e40]: Select a session from the left to view the summary and full thread.

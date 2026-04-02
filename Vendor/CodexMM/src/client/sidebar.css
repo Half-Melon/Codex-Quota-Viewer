@@ -6,10 +6,10 @@
   max-width: var(--sidebar-width);
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 14px;
+  gap: 10px;
+  padding: 12px;
   border: 1px solid var(--line);
-  border-radius: 18px;
+  border-radius: 16px;
   background: linear-gradient(180deg, rgba(35, 35, 34, 0.96) 0%, rgba(29, 29, 28, 0.98) 100%);
   box-shadow: var(--shadow);
   overflow: hidden;
@@ -149,6 +149,7 @@
   position: relative;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .project-groups__canvas {
@@ -157,37 +158,40 @@
 }
 
 .project-group {
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.02);
-  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
 }
 
 .project-group--virtual,
 .session-row--virtual {
   position: absolute;
+  top: 0;
   left: 0;
   right: 0;
 }
 
 .project-group__header {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr);
-  gap: 10px;
-  align-items: start;
-  min-height: 88px;
-  padding: 12px 12px 10px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  height: 100%;
+  padding: 3px 4px;
+  border-radius: 8px;
 }
 
 .project-group__header--open {
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(255, 255, 255, 0.035);
 }
 
 .project-group__checkbox,
 .session-row__checkbox {
   display: flex;
   justify-content: center;
-  padding-top: 5px;
+  padding-top: 0;
 }
 
 .project-group__checkbox input,
@@ -199,103 +203,103 @@
 .project-group__toggle {
   width: 100%;
   display: grid;
-  grid-template-columns: 10px minmax(0, 1fr) auto;
-  column-gap: 8px;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  column-gap: 5px;
   padding: 0;
   border: 0;
   background: transparent;
   text-align: left;
   cursor: pointer;
-  align-items: start;
+  align-items: center;
   color: inherit;
 }
 
 .project-group__chevron {
-  width: 10px;
-  font-size: 11px;
+  width: 8px;
+  font-size: 10px;
   color: var(--text-tertiary);
-  padding-top: 4px;
 }
 
 .project-group__label {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 0;
 }
 
-.project-group__label strong {
+.project-group__name {
   display: block;
-  font-size: 14px;
-  font-weight: 650;
+  font-size: 12px;
+  font-weight: 520;
   color: var(--text);
-  line-height: 1.3;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  display: -webkit-box;
+  line-height: 1.1;
+  white-space: nowrap;
   overflow: hidden;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  text-overflow: ellipsis;
 }
 
-.project-group__label span {
+.project-group__path {
   display: block;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  display: -webkit-box;
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  line-height: 1.05;
+  white-space: nowrap;
   overflow: hidden;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  text-overflow: ellipsis;
 }
 
 .project-group__count {
-  padding-top: 2px;
+  align-self: center;
+  font-size: 10.5px;
+  color: var(--text-secondary);
+  line-height: 1;
 }
 
 .project-group__sessions {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 0 6px 6px;
+  gap: 0;
+  padding: 0 0 0 10px;
 }
 
 .session-row {
   position: relative;
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr);
-  gap: 8px;
-  align-items: start;
-  padding: 10px 10px 10px 18px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 5px;
+  align-items: center;
+  padding: 2px 5px 2px 8px;
   border: 1px solid transparent;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.02);
+  border-radius: 6px;
+  background: transparent;
   transition:
     border-color 140ms ease,
     background 140ms ease;
 }
 
 .session-row--virtual {
-  margin-left: 28px;
-  width: calc(100% - 28px);
+  position: absolute;
+  top: 0;
+  margin-left: 6px;
+  width: calc(100% - 6px);
 }
 
 .session-row::before {
   content: "";
   position: absolute;
-  inset: 8px auto 8px 4px;
+  inset: 6px auto 6px 2px;
   width: 2px;
   border-radius: 999px;
   background: transparent;
 }
 
 .session-row:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.035);
 }
 
 .session-row--selected {
-  border-color: rgba(151, 168, 191, 0.18);
-  background: rgba(151, 168, 191, 0.12);
+  border-color: transparent;
+  background: rgba(151, 168, 191, 0.1);
 }
 
 .session-row--selected::before {
@@ -305,9 +309,11 @@
 .session-row__button {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 1px;
   width: 100%;
-  min-height: 64px;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
   padding: 0;
   border: 0;
   background: transparent;
@@ -318,65 +324,75 @@
 
 .session-row__headline {
   justify-content: space-between;
-  gap: 10px;
-  align-items: flex-start;
+  gap: 3px;
+  align-items: center;
+  min-width: 0;
 }
 
-.session-row__headline strong {
-  font-size: 14px;
-  font-weight: 600;
+.session-row__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: block;
+  font-size: 12px;
+  font-weight: 480;
   color: var(--text);
-  line-height: 1.4;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .session-row__headline span,
-.session-row__preview span {
+.session-row__preview-text {
   display: block;
 }
 
 .session-row__headline span {
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: 10.5px;
   font-variant-numeric: tabular-nums;
   color: var(--text-tertiary);
-  padding-top: 1px;
+  padding-top: 0;
 }
 
-.session-row__preview span {
-  font-size: 13px;
-  line-height: 1.55;
+.session-row__preview {
+  min-width: 0;
+}
+
+.session-row__preview-text {
+  font-size: 10.5px;
+  line-height: 1.1;
   color: var(--text-secondary);
-  display: -webkit-box;
+  white-space: nowrap;
   overflow: hidden;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  text-overflow: ellipsis;
 }
 
 @media (max-width: 767px) {
   .session-sidebar {
-    height: auto;
-    min-height: auto;
-    padding: 12px;
-    overflow: visible;
-  }
-
-  .project-groups {
-    overflow: visible;
+    height: 100%;
+    min-height: 0;
+    padding: 8px;
+    gap: 8px;
   }
 
   .sidebar-command,
   .sidebar-filter-tab {
-    min-height: 44px;
+    min-height: 40px;
   }
 
   .project-group__header {
-    min-height: 96px;
+    padding: 3px 4px;
   }
 
-  .session-row__button {
-    min-height: 72px;
+  .session-row {
+    padding: 2px 4px 2px 7px;
+  }
+
+  .session-row--virtual {
+    position: absolute;
+    top: 0;
+    margin-left: 5px;
+    width: calc(100% - 5px);
   }
 }

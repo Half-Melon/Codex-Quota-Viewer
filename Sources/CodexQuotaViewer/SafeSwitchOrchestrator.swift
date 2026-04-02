@@ -31,6 +31,7 @@ struct RepairOperationResult: Equatable {
 enum SwitchOrchestratorError: LocalizedError {
     case missingRuntimeConfig(String)
     case missingProviderIdentifier(String)
+    case automaticRollbackFailed
 
     var errorDescription: String? {
         switch self {
@@ -43,6 +44,11 @@ enum SwitchOrchestratorError: LocalizedError {
             return AppLocalization.localized(
                 en: "The target profile “\(name)” is missing a model provider identifier.",
                 zh: "目标账号“\(name)”缺少 model provider 标识。"
+            )
+        case .automaticRollbackFailed:
+            return AppLocalization.localized(
+                en: "The operation failed and the automatic rollback could not be completed. Use the latest restore point to roll back manually.",
+                zh: "操作失败，且自动回滚未能完成。请使用最新还原点手动回滚。"
             )
         }
     }
@@ -96,17 +102,19 @@ final class SwitchOrchestrator {
     }
 
     func perform(targetProfile: ProviderProfile) async throws -> SwitchOperationResult {
-        let preview = try preview(targetProfile: targetProfile)
         let previouslyRunning = try await desktopController.closeIfRunning()
+        var restorePoint: RestorePointManifest?
 
         do {
-            let restorePoint = try backupManager.createRestorePoint(
+            let latestPreview = try preview(targetProfile: targetProfile)
+            let createdRestorePoint = try backupManager.createRestorePoint(
                 reason: "safe-switch",
                 summary: "Switch to \(targetProfile.displayName)",
-                files: preview.filesToBackup,
+                files: latestPreview.filesToBackup,
                 codexWasRunning: previouslyRunning
             )
-            let writer = ProtectedFileMutationContext(restorePoint: restorePoint)
+            restorePoint = createdRestorePoint
+            let writer = ProtectedFileMutationContext(restorePoint: createdRestorePoint)
             let mergedConfig = try mergeRuntimeConfig(
                 currentConfigData: try store.currentConfigData(),
                 targetConfigData: try effectiveTargetConfigData(for: targetProfile)
@@ -117,7 +125,7 @@ final class SwitchOrchestrator {
 
             let rolloutResult = try rolloutSynchronizer.syncProviders(
                 in: [store.sessionsRootURL, store.archivedSessionsRootURL],
-                targetProvider: preview.targetProviderID,
+                targetProvider: latestPreview.targetProviderID,
                 writer: writer
             )
             let repairSummary = try await repairClient.rescanAndRepair()
@@ -125,11 +133,19 @@ final class SwitchOrchestrator {
 
             return SwitchOperationResult(
                 targetProfileID: targetProfile.id,
-                restorePoint: restorePoint,
+                restorePoint: createdRestorePoint,
                 updatedRolloutCount: rolloutResult.updatedFiles.count,
                 repairSummary: repairSummary
             )
         } catch {
+            if let restorePoint {
+                do {
+                    try backupManager.restoreRestorePoint(restorePoint)
+                } catch {
+                    try? await desktopController.reopenIfNeeded(previouslyRunning: previouslyRunning)
+                    throw SwitchOrchestratorError.automaticRollbackFailed
+                }
+            }
             try? await desktopController.reopenIfNeeded(previouslyRunning: previouslyRunning)
             throw error
         }
@@ -138,21 +154,31 @@ final class SwitchOrchestrator {
     func repairCurrentThreads() async throws -> RepairOperationResult {
         let filesToBackup = deduplicateURLs(store.protectedMutationFileURLs())
         let previouslyRunning = try await desktopController.closeIfRunning()
+        var restorePoint: RestorePointManifest?
 
         do {
-            let restorePoint = try backupManager.createRestorePoint(
+            let createdRestorePoint = try backupManager.createRestorePoint(
                 reason: "repair-local-threads",
                 summary: "Repair local thread metadata",
                 files: filesToBackup,
                 codexWasRunning: previouslyRunning
             )
+            restorePoint = createdRestorePoint
             let repairSummary = try await repairClient.rescanAndRepair()
             try await desktopController.reopenIfNeeded(previouslyRunning: previouslyRunning)
             return RepairOperationResult(
-                restorePoint: restorePoint,
+                restorePoint: createdRestorePoint,
                 repairSummary: repairSummary
             )
         } catch {
+            if let restorePoint {
+                do {
+                    try backupManager.restoreRestorePoint(restorePoint)
+                } catch {
+                    try? await desktopController.reopenIfNeeded(previouslyRunning: previouslyRunning)
+                    throw SwitchOrchestratorError.automaticRollbackFailed
+                }
+            }
             try? await desktopController.reopenIfNeeded(previouslyRunning: previouslyRunning)
             throw error
         }

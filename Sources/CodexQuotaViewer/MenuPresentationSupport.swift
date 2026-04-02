@@ -93,6 +93,14 @@ struct AllAccountsMenuItemPresentation: Equatable {
     let triggersDirectSwitch: Bool
 }
 
+struct QuotaOverviewMenuItemPresentation: Equatable {
+    let title: String
+    let showsCheckmark: Bool
+    let isEnabled: Bool
+    let triggersDirectSwitch: Bool
+    let accessibilityLabel: String
+}
+
 func buildSettingsAccountSections(
     _ inputs: [SettingsAccountPresentationInput]
 ) -> [SettingsAccountSection] {
@@ -175,6 +183,71 @@ func buildAllAccountsMenuItemPresentation(
     )
 }
 
+func buildQuotaOverviewMenuItemPresentation(
+    for tile: QuotaTileViewModel,
+    isPerformingSafeSwitchOperation: Bool
+) -> QuotaOverviewMenuItemPresentation {
+    let usageSummary = joinedNonEmptyParts([tile.primaryText, tile.secondaryText])
+    let title = usageSummary.isEmpty
+        ? tile.profile.displayName
+        : "\(tile.profile.displayName) · \(usageSummary)"
+    let accessibilityLabel = tile.profile.isCurrent
+        ? AppLocalization.localized(
+            en: "Current account, \(title)",
+            zh: "当前账号，\(title)"
+        )
+        : title
+
+    return QuotaOverviewMenuItemPresentation(
+        title: title,
+        showsCheckmark: tile.profile.isCurrent,
+        isEnabled: tile.profile.isCurrent || !isPerformingSafeSwitchOperation,
+        triggersDirectSwitch: !tile.profile.isCurrent && !isPerformingSafeSwitchOperation,
+        accessibilityLabel: accessibilityLabel
+    )
+}
+
+func quotaOverviewEmptyStateMessage(for state: QuotaOverviewState?) -> String {
+    guard let state else {
+        return AppLocalization.localized(en: "No saved accounts", zh: "暂无已保存账号")
+    }
+
+    if state.hasProfiles {
+        if state.isAPIOnly {
+            return AppLocalization.localized(
+                en: "API accounts do not expose official quota. Open All Accounts below.",
+                zh: "API 账号不提供官方额度信息，请在下方“全部账号”中查看。"
+            )
+        }
+
+        return AppLocalization.localized(
+            en: "Quota cards are unavailable for the saved accounts. Open All Accounts below.",
+            zh: "当前无法显示额度卡片，请在下方“全部账号”中查看。"
+        )
+    }
+
+    return AppLocalization.localized(en: "No saved accounts", zh: "暂无已保存账号")
+}
+
+func statusItemAccessibilityDescription(
+    summary: String,
+    style: StatusItemStyle,
+    isStale: Bool
+) -> String {
+    let prefix = switch style {
+    case .meter:
+        AppLocalization.localized(en: "Quota meter", zh: "额度仪表")
+    case .text:
+        AppLocalization.localized(en: "Quota status", zh: "额度状态")
+    }
+
+    let staleSuffix = isStale
+        ? AppLocalization.localized(en: "Data may be stale", zh: "数据可能已过期")
+        : nil
+
+    return joinedNonEmptyParts([prefix, summary, staleSuffix])
+}
+
 private func settingsAccountSortComparator(
     lhs: SettingsAccountPresentationInput,
     rhs: SettingsAccountPresentationInput
@@ -198,28 +271,19 @@ private func makeSettingsAccountItem(
     let stateLabel = localizedSettingsAccountStateLabel(input.state)
     let subtitle: String
     if input.authMode == .apiKey {
-        subtitle = [
+        subtitle = joinedNonEmptyParts([
             stateLabel,
             AppLocalization.localized(en: "API Key", zh: "API 密钥"),
             AppLocalization.localized(en: "Local vault", zh: "本地账号仓"),
             input.host,
             input.model,
-        ]
-        .compactMap { value -> String? in
-            guard let value,
-                  !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                return nil
-            }
-            return value
-        }
-        .joined(separator: " · ")
+        ])
     } else {
-        subtitle = [
+        subtitle = joinedNonEmptyParts([
             stateLabel,
             AppLocalization.localized(en: "ChatGPT", zh: "ChatGPT"),
             AppLocalization.localized(en: "Local vault", zh: "本地账号仓"),
-        ]
-        .joined(separator: " · ")
+        ])
     }
 
     return SettingsAccountItem(

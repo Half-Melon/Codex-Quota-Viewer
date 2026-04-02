@@ -26,17 +26,21 @@ import type { TranslationSet } from "./i18n";
 import {
   buildFilters,
   buildOfficialRepairFeedback,
+  canRestoreSessionStatus,
+  canResumeSessionStatus,
+  canTrashSessionStatus,
   filterVisibleSessions,
   isArchivedViewStatus,
+  NARROW_VIEWPORT_MEDIA_QUERY,
   isRestoreTargetError,
   mergeSessionList,
   readError,
   readMediaQueryMatch,
+  subscribeMediaQuery,
 } from "./session-browser-helpers";
 
 const DEFAULT_STATUS: SessionStatus = "active";
 const FILTER_DEBOUNCE_MS = 200;
-const MOBILE_BREAKPOINT_QUERY = "(max-width: 767px)";
 
 export function useSessionBrowser(copy: TranslationSet) {
   const [indexedSessions, setIndexedSessions] = useState<SessionRecord[]>([]);
@@ -59,10 +63,10 @@ export function useSessionBrowser(copy: TranslationSet) {
   const [loadingTimeline, setLoadingTimeline] = useState(false);
   const [hasLoadedInitialIndex, setHasLoadedInitialIndex] = useState(false);
   const [isNarrowViewport, setIsNarrowViewport] = useState(() =>
-    readMediaQueryMatch(MOBILE_BREAKPOINT_QUERY),
+    readMediaQueryMatch(NARROW_VIEWPORT_MEDIA_QUERY),
   );
   const [showMobileList, setShowMobileList] = useState(() =>
-    readMediaQueryMatch(MOBILE_BREAKPOINT_QUERY),
+    readMediaQueryMatch(NARROW_VIEWPORT_MEDIA_QUERY),
   );
 
   const listRequestSequenceRef = useRef(0);
@@ -71,6 +75,11 @@ export function useSessionBrowser(copy: TranslationSet) {
   const loadDetailRef = useRef<(sessionId: string, requestId: number) => Promise<void>>(
     async () => {},
   );
+  const latestListStateRef = useRef({
+    search,
+    status,
+    indexedSessions,
+  });
 
   const loadListedSessions = useCallback(async (filters: SessionFilters) => {
     const requestId = ++listRequestSequenceRef.current;
@@ -147,17 +156,15 @@ export function useSessionBrowser(copy: TranslationSet) {
   }, [hasLoadedInitialIndex, loadListedSessions, search, status]);
 
   useEffect(() => {
-    const mediaQuery = window.matchMedia(MOBILE_BREAKPOINT_QUERY);
-    const updateViewport = () => {
-      setIsNarrowViewport(mediaQuery.matches);
+    latestListStateRef.current = {
+      search,
+      status,
+      indexedSessions,
     };
+  }, [indexedSessions, search, status]);
 
-    updateViewport();
-    mediaQuery.addEventListener("change", updateViewport);
-
-    return () => {
-      mediaQuery.removeEventListener("change", updateViewport);
-    };
+  useEffect(() => {
+    return subscribeMediaQuery(NARROW_VIEWPORT_MEDIA_QUERY, setIsNarrowViewport);
   }, []);
 
   useEffect(() => {
@@ -242,22 +249,13 @@ export function useSessionBrowser(copy: TranslationSet) {
     checkedSessionRecords.every((session) => session.status === "active");
   const canTrashBatch =
     checkedSessionRecords.length > 0 &&
-    checkedSessionRecords.every(
-      (session) => session.status === "active" || session.status === "archived",
-    );
+    checkedSessionRecords.every((session) => canTrashSessionStatus(session.status));
   const canRestoreBatch =
     checkedSessionRecords.length > 0 &&
-    checkedSessionRecords.every((session) =>
-      ["archived", "deleted_pending_purge", "restorable"].includes(session.status),
-    );
+    checkedSessionRecords.every((session) => canRestoreSessionStatus(session.status));
   const canRestoreCurrent =
-    currentRecord !== null &&
-    ["active", "archived", "deleted_pending_purge", "restorable"].includes(
-      currentRecord.status,
-    );
+    currentRecord !== null && canResumeSessionStatus(currentRecord.status);
   const canArchiveCurrent = currentRecord?.status === "active";
-  const shouldRenderSidebar = !isNarrowViewport || showMobileList;
-  const shouldRenderDetail = !isNarrowViewport || !showMobileList;
 
   return {
     indexedSessions,
@@ -279,6 +277,7 @@ export function useSessionBrowser(copy: TranslationSet) {
     loadingDetail,
     loadingTimeline,
     isNarrowViewport,
+    showMobileList,
     archivedLikeCount,
     trashIds,
     canArchiveBatch,
@@ -286,8 +285,6 @@ export function useSessionBrowser(copy: TranslationSet) {
     canRestoreBatch,
     canRestoreCurrent,
     canArchiveCurrent,
-    shouldRenderSidebar,
-    shouldRenderDetail,
     setSearch,
     setStatus,
     setTargetCwd,
@@ -325,7 +322,8 @@ export function useSessionBrowser(copy: TranslationSet) {
       }
 
       setIndexedSessions(response.sessions);
-      setListedSessions(filterVisibleSessions(response.sessions, search, status));
+      const latest = latestListStateRef.current;
+      setListedSessions(filterVisibleSessions(response.sessions, latest.search, latest.status));
       setHasLoadedInitialIndex(true);
       setResumeCommand(null);
       setFeedback(null);
@@ -604,7 +602,8 @@ export function useSessionBrowser(copy: TranslationSet) {
 
   function replaceSessions(nextSessions: SessionRecord[]) {
     setIndexedSessions(nextSessions);
-    setListedSessions(filterVisibleSessions(nextSessions, search, status));
+    const latest = latestListStateRef.current;
+    setListedSessions(filterVisibleSessions(nextSessions, latest.search, latest.status));
   }
 
   function removeRecords(sessionIds: string[]) {
@@ -625,11 +624,14 @@ export function useSessionBrowser(copy: TranslationSet) {
   }
 
   async function refreshListedSessionsForCurrentFilters() {
-    const filters = buildFilters(search, status);
+    const latest = latestListStateRef.current;
+    const filters = buildFilters(latest.search, latest.status);
 
-    if (!filters.query && status === DEFAULT_STATUS) {
+    if (!filters.query && latest.status === DEFAULT_STATUS) {
       listRequestSequenceRef.current += 1;
-      setListedSessions(filterVisibleSessions(indexedSessions, search, status));
+      setListedSessions(
+        filterVisibleSessions(latest.indexedSessions, latest.search, latest.status),
+      );
       setLoadingSessions(false);
       return;
     }

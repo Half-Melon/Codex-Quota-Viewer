@@ -171,6 +171,13 @@ final class ProfileStore {
         ] + additionalFiles
     }
 
+    func accountMutationFileURLs(additionalFiles: [URL] = []) -> [URL] {
+        [
+            settingsURL,
+            accountsIndexURL,
+        ] + additionalFiles
+    }
+
     private func ensureBaseDirectoryExists() {
         try? fileManager.createDirectory(
             at: baseURL,

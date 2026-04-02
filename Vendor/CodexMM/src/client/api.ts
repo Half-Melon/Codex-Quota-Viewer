@@ -1,5 +1,6 @@
 import type {
   ApiErrorCode,
+  ApiErrorDetails,
   ApiErrorResponse,
   BatchSessionActionResponse,
   OfficialRepairResponse,
@@ -13,11 +14,13 @@ import type {
 
 export class ApiRequestError extends Error {
   readonly code?: ApiErrorCode;
+  readonly details?: ApiErrorDetails;
 
-  constructor(message: string, code?: ApiErrorCode) {
+  constructor(message: string, code?: ApiErrorCode, details?: ApiErrorDetails) {
     super(message);
     this.name = "ApiRequestError";
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -134,6 +137,7 @@ async function parseJson<T>(response: Response): Promise<T> {
         throw new ApiRequestError(
           payload.error,
           typeof payload.code === "string" ? payload.code : undefined,
+          readErrorDetails(payload.details),
         );
       }
     } catch (error) {
@@ -157,4 +161,37 @@ async function postBatch(path: string, sessionIds: string[]) {
   });
 
   return parseJson<BatchSessionActionResponse>(response);
+}
+
+function readErrorDetails(details: unknown): ApiErrorDetails | undefined {
+  if (!details || typeof details !== "object") {
+    return undefined;
+  }
+
+  const normalized: ApiErrorDetails = {};
+
+  if (typeof (details as { sessionId?: unknown }).sessionId === "string") {
+    normalized.sessionId = (details as { sessionId: string }).sessionId;
+  }
+
+  const label = (details as { label?: unknown }).label;
+  if (label === "active" || label === "archive" || label === "snapshot") {
+    normalized.label = label;
+  }
+
+  if (typeof (details as { managedRoot?: unknown }).managedRoot === "string") {
+    normalized.managedRoot = (details as { managedRoot: string }).managedRoot;
+  }
+
+  if (typeof (details as { candidatePath?: unknown }).candidatePath === "string") {
+    normalized.candidatePath = (details as { candidatePath: string }).candidatePath;
+  }
+
+  if (typeof (details as { resolvedCandidatePath?: unknown }).resolvedCandidatePath === "string") {
+    normalized.resolvedCandidatePath = (
+      details as { resolvedCandidatePath: string }
+    ).resolvedCandidatePath;
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
 }

@@ -61,6 +61,42 @@ struct MenuNoticeEntry: Equatable {
     }
 }
 
+func normalizeMenuNoticeEntry(
+    _ entry: MenuNoticeEntry?,
+    at now: Date = Date(),
+    operationIsActive: Bool
+) -> MenuNoticeEntry? {
+    guard let entry,
+          entry.visibleNotice(at: now, operationIsActive: operationIsActive) != nil else {
+        return nil
+    }
+
+    return entry
+}
+
+func nextMenuNoticeExpiry(
+    safeSwitchNotice: MenuNoticeEntry?,
+    isForegroundOperationActive: Bool,
+    sessionManagerNotice: MenuNoticeEntry?,
+    isLaunchingSessionManager: Bool,
+    now: Date = Date()
+) -> Date? {
+    [
+        normalizeMenuNoticeEntry(
+            safeSwitchNotice,
+            at: now,
+            operationIsActive: isForegroundOperationActive
+        )?.expiresAt,
+        normalizeMenuNoticeEntry(
+            sessionManagerNotice,
+            at: now,
+            operationIsActive: isLaunchingSessionManager
+        )?.expiresAt,
+    ]
+    .compactMap { $0 }
+    .min()
+}
+
 func visibleMenuNotice(
     safeSwitchNotice: MenuNoticeEntry?,
     isForegroundOperationActive: Bool,
@@ -72,17 +108,19 @@ func visibleMenuNotice(
     loadWarningNotice: String?,
     now: Date = Date()
 ) -> MenuNotice? {
-    if let notice = safeSwitchNotice?.visibleNotice(
+    if let notice = normalizeMenuNoticeEntry(
+        safeSwitchNotice,
         at: now,
         operationIsActive: isForegroundOperationActive
-    ) {
+    )?.notice {
         return notice
     }
 
-    if let notice = sessionManagerNotice?.visibleNotice(
+    if let notice = normalizeMenuNoticeEntry(
+        sessionManagerNotice,
         at: now,
         operationIsActive: isLaunchingSessionManager
-    ) {
+    )?.notice {
         return notice
     }
 

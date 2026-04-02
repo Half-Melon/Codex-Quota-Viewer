@@ -280,7 +280,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         addAPIButton.isEnabled = accountPanelState.actionsEnabled
         openVaultButton.isEnabled = true
         accountsTableController.update(state: accountPanelState)
-        accountsTableView.reloadData()
         window?.contentView?.layoutSubtreeIfNeeded()
     }
 

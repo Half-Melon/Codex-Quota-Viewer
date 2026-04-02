@@ -81,21 +81,12 @@ struct ProviderProfile: Equatable, Identifiable {
     }
 
     var switchSubtitle: String {
-        let parts = [
+        return joinedNonEmptyParts([
             modeLabel,
             providerLabel == "default" ? nil : providerLabel,
             baseURLHost,
             model,
-        ]
-        .compactMap { value -> String? in
-            guard let value,
-                  !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                return nil
-            }
-            return value
-        }
-
-        return parts.joined(separator: " · ")
+        ])
     }
 }
 

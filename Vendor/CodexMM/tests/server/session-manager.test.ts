@@ -1,13 +1,15 @@
-import { access, mkdir, rename, rm } from "node:fs/promises";
+import { access, mkdir, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
+import { AppError } from "../../src/server/lib/errors";
 import {
   createSessionManager,
   type SessionManager,
 } from "../../src/server/services/session-manager";
+import { ensureInsidePath } from "../../src/server/lib/paths";
 import {
   createHarness,
   readOfficialThread,
@@ -93,6 +95,37 @@ describe("SessionManager", () => {
     await expect(readSessionIndexEntry(harness.codexHome, "session-rescan-idempotent")).resolves.toBeNull();
   });
 
+  test("reports canonical official-state issue codes without localized prose", async () => {
+    await seedSession(harness.codexHome, {
+      id: "session-official-state-codes",
+      cwd: "/work/official-state-codes",
+      startedAt: "2026-03-29T10:16:37.087Z",
+      firstUserMessage: "只返回 canonical official state",
+      latestAgentMessage: "不要把中文文案塞进 shared contract。",
+      registerOfficialThread: false,
+      registerSessionIndex: false,
+    });
+
+    await manager.rescan();
+    const detail = await manager.getSessionDetail("session-official-state-codes");
+
+    expect(detail.officialState).toEqual({
+      status: "repair_needed",
+      canAppearInCodex: true,
+      issueCodes: ["missing_thread", "missing_recent_conversation"],
+    });
+  });
+
+  test("reports unknown session errors with structured details", async () => {
+    await expect(manager.getSessionDetail("session-missing-detail")).rejects.toMatchObject({
+      code: "unknown_session",
+      message: "Unknown session: session-missing-detail",
+      details: {
+        sessionId: "session-missing-detail",
+      },
+    });
+  });
+
   test("archives an active session and marks it archived", async () => {
     const filePath = await seedSession(harness.codexHome, {
       id: "session-archive",
@@ -115,17 +148,59 @@ describe("SessionManager", () => {
 
     await expect(access(filePath)).rejects.toThrow();
     await expect(access(record.archivePath!)).resolves.toBeUndefined();
-    expect(record.archivePath).toBe(expectedArchivePath);
+    expect(record.archivePath).toBe(await realpath(expectedArchivePath));
     expect(record.status).toBe("archived");
     expect(readOfficialThread(harness.codexHome, "session-archive")).toMatchObject({
       id: "session-archive",
       archived: 1,
-      rolloutPath: expectedArchivePath,
+      rolloutPath: await realpath(expectedArchivePath),
     });
     await expect(readSessionIndexEntry(harness.codexHome, "session-archive")).resolves.toMatchObject({
       id: "session-archive",
       thread_name: "把它归档",
     });
+  });
+
+  test("rejects archive targets that escape the managed archive root", async () => {
+    await seedSession(harness.codexHome, {
+      id: "session-archive-escape",
+      cwd: "/work/archive-escape",
+      startedAt: "2026-03-29T10:16:37.087Z",
+      firstUserMessage: "不要归档到外面",
+      latestAgentMessage: "需要拒绝越界路径。",
+    });
+
+    await manager.rescan();
+
+    const db = new Database(path.join(harness.managerHome, "index.db"));
+    db.prepare(
+      `
+        update sessions
+        set original_relative_path = ?
+        where id = ?
+      `,
+    ).run("../../escape.jsonl", "session-archive-escape");
+    db.close();
+
+    const managedRoot = path.join(harness.codexHome, "archived_sessions");
+    const candidatePath = path.join(managedRoot, "../../escape.jsonl");
+    const resolvedManagedRoot = await realpath(managedRoot);
+    const resolvedCandidatePath = path.join(
+      await realpath(path.dirname(candidatePath)),
+      path.basename(candidatePath),
+    );
+
+    await expect(manager.archiveSession("session-archive-escape")).rejects.toMatchObject({
+      code: "managed_session_path_outside",
+      message: "会话 archive 文件路径超出了受管目录，已拒绝继续操作。",
+      details: {
+        label: "archive",
+        managedRoot: resolvedManagedRoot,
+        candidatePath,
+        resolvedCandidatePath,
+      },
+    });
+    await expect(access(path.join(harness.codexHome, "..", "escape.jsonl"))).rejects.toThrow();
   });
 
   test("safe deletes by snapshotting and marking session deleted_pending_purge", async () => {
@@ -151,12 +226,57 @@ describe("SessionManager", () => {
     await expect(access(filePath)).rejects.toThrow();
     await expect(access(record.archivePath!)).resolves.toBeUndefined();
     await expect(access(record.snapshotPath!)).resolves.toBeUndefined();
-    expect(record.archivePath).toBe(expectedArchivePath);
+    expect(record.archivePath).toBe(await realpath(expectedArchivePath));
     expect(record.status).toBe("deleted_pending_purge");
     expect(readOfficialThread(harness.codexHome, "session-delete")).toMatchObject({
       id: "session-delete",
       archived: 1,
-      rolloutPath: expectedArchivePath,
+      rolloutPath: await realpath(expectedArchivePath),
+    });
+  });
+
+  test("rejects deleting an indexed session when its active path resolves outside the managed root", async () => {
+    const filePath = await seedSession(harness.codexHome, {
+      id: "session-delete-symlink",
+      cwd: "/work/delete-symlink",
+      startedAt: "2026-03-29T10:18:37.087Z",
+      firstUserMessage: "不要越界删除",
+      latestAgentMessage: "symlink 目标必须被拒绝。",
+    });
+
+    await manager.rescan();
+
+    const outsideDirectory = path.join(harness.managerHome, "outside");
+    const outsideFile = path.join(outsideDirectory, "secret.jsonl");
+    await mkdir(outsideDirectory, { recursive: true });
+    await writeFile(outsideFile, "secret-data");
+    await rm(filePath, { force: true });
+    await symlink(outsideFile, filePath);
+
+    await expect(manager.deleteSession("session-delete-symlink")).rejects.toThrow("受管目录");
+    await expect(readFile(outsideFile, "utf8")).resolves.toBe("secret-data");
+  });
+
+  test("reports raw path escape errors with structured details", () => {
+    const managedRoot = path.join(harness.codexHome, "sessions");
+    const candidatePath = path.join(harness.codexHome, "..", "escaped.jsonl");
+
+    let thrown: unknown;
+
+    try {
+      ensureInsidePath(managedRoot, candidatePath);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toMatchObject({
+      code: "path_outside_managed_root",
+      message: `Path is outside managed root: ${candidatePath}`,
+      details: {
+        managedRoot,
+        candidatePath,
+        resolvedCandidatePath: candidatePath,
+      },
     });
   });
 
@@ -188,7 +308,7 @@ describe("SessionManager", () => {
       id: "session-restore",
       archived: 0,
       archivedAt: null,
-      rolloutPath: filePath,
+      rolloutPath: await realpath(filePath),
     });
     await expect(readSessionIndexEntry(harness.codexHome, "session-restore")).resolves.toMatchObject({
       id: "session-restore",
@@ -270,6 +390,46 @@ describe("SessionManager", () => {
       updatedThreads: 0,
       updatedSessionIndexEntries: 0,
     });
+  });
+
+  test("repairs targeted sessions incrementally without rebuilding unrelated catalog rows", async () => {
+    const targetFilePath = await seedSession(harness.codexHome, {
+      id: "session-targeted-repair",
+      cwd: "/work/targeted-repair",
+      startedAt: "2026-03-29T11:16:37.087Z",
+      firstUserMessage: "修复前标题",
+      latestAgentMessage: "目标会话需要被定向修复。",
+    });
+    await seedSession(harness.codexHome, {
+      id: "session-targeted-untouched",
+      cwd: "/work/targeted-untouched",
+      startedAt: "2026-03-29T11:17:37.087Z",
+      firstUserMessage: "不要重建这条会话",
+      latestAgentMessage: "无关会话不该被重新索引。",
+    });
+
+    await manager.rescan();
+    const untouchedBefore = await manager.getSessionDetail("session-targeted-untouched");
+
+    await rewriteFirstUserMessage(targetFilePath, "修复后标题");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    await manager.repairOfficialThreads(["session-targeted-repair"]);
+
+    const targetAfter = await manager.getSessionDetail("session-targeted-repair");
+    const untouchedAfter = await manager.getSessionDetail("session-targeted-untouched");
+
+    expect(targetAfter.record.userPromptExcerpt).toBe("修复后标题");
+    expect(targetAfter.record.indexedAt).not.toBe(untouchedBefore.record.indexedAt);
+    expect(readOfficialThreadTitle(harness.codexHome, "session-targeted-repair")).toBe(
+      "修复后标题",
+    );
+    await expect(readSessionIndexEntry(harness.codexHome, "session-targeted-repair")).resolves.toMatchObject({
+      id: "session-targeted-repair",
+      thread_name: "修复后标题",
+    });
+    expect(untouchedAfter.record.updatedAt).toBe(untouchedBefore.record.updatedAt);
+    expect(untouchedAfter.record.indexedAt).toBe(untouchedBefore.record.indexedAt);
   });
 
   test("repairs remove broken official thread rows when rollout files are gone", async () => {
@@ -365,13 +525,13 @@ describe("SessionManager", () => {
 
     const rescanned = await manager.getSessionDetail("session-flat-archive");
 
-    expect(rescanned.record.archivePath).toBe(canonicalArchivePath);
+    expect(rescanned.record.archivePath).toBe(await realpath(canonicalArchivePath));
     await expect(access(canonicalArchivePath)).resolves.toBeUndefined();
     await expect(access(flatArchivePath)).rejects.toThrow();
     expect(readOfficialThread(harness.codexHome, "session-flat-archive")).toMatchObject({
       id: "session-flat-archive",
       archived: 1,
-      rolloutPath: canonicalArchivePath,
+      rolloutPath: await realpath(canonicalArchivePath),
     });
   });
 
@@ -429,7 +589,7 @@ describe("SessionManager", () => {
       id: "session-rebind-cwd",
       cwd: projectDir,
       archived: 0,
-      rolloutPath: filePath,
+      rolloutPath: await realpath(filePath),
     });
 
     await manager.rescan();
@@ -439,6 +599,33 @@ describe("SessionManager", () => {
         cwd: projectDir,
       }),
     });
+  });
+
+  test("keeps snapshot metadata unchanged when rebinding cwd during restore", async () => {
+    const projectDir = path.join(harness.managerHome, "snapshot-rebind-target");
+    const filePath = await seedSession(harness.codexHome, {
+      id: "session-snapshot-rebind",
+      cwd: "/work/original-snapshot",
+      startedAt: "2026-03-29T12:16:37.087Z",
+      firstUserMessage: "从 snapshot 永久改目录",
+      latestAgentMessage: "只该改恢复后的活动文件。",
+    });
+
+    await manager.rescan();
+    const deleted = await manager.deleteSession("session-snapshot-rebind");
+    await rm(deleted.archivePath!, { force: true });
+    await mkdir(projectDir, { recursive: true });
+
+    await manager.rescan();
+
+    await manager.restoreSession({
+      sessionId: "session-snapshot-rebind",
+      targetCwd: projectDir,
+      restoreMode: "rebind_cwd",
+    });
+
+    await expect(readFile(deleted.snapshotPath!, "utf8")).resolves.toContain("\"cwd\":\"/work/original-snapshot\"");
+    await expect(readFile(filePath, "utf8")).resolves.toContain(`"cwd":"${projectDir}"`);
   });
 
   test("rejects unsupported restore modes instead of silently normalizing them", async () => {
@@ -506,6 +693,45 @@ describe("SessionManager", () => {
     expect(repairedThread).toMatchObject({
       title: "这是当前助手摘要",
       firstUserMessage: "历史真实首问",
+    });
+  });
+
+  test("repairs missing sandbox and approval metadata with conservative defaults", async () => {
+    await seedSession(harness.codexHome, {
+      id: "session-repair-conservative-defaults",
+      cwd: "/work/repair-conservative",
+      startedAt: "2026-03-29T13:16:37.087Z",
+      firstUserMessage: "修复时不能放大权限",
+      latestAgentMessage: "应该写入保守默认值。",
+      registerOfficialThread: false,
+      registerSessionIndex: false,
+    });
+
+    await manager.rescan();
+    await manager.repairOfficialThreads(["session-repair-conservative-defaults"]);
+
+    const db = new Database(path.join(harness.codexHome, "state_5.sqlite"));
+    const row = db
+      .prepare(
+        `
+          select
+            sandbox_policy as sandboxPolicy,
+            approval_mode as approvalMode
+          from threads
+          where id = ?
+        `,
+      )
+      .get("session-repair-conservative-defaults") as
+      | {
+          sandboxPolicy: string;
+          approvalMode: string;
+        }
+      | undefined;
+    db.close();
+
+    expect(row).toMatchObject({
+      sandboxPolicy: "workspace-write",
+      approvalMode: "default",
     });
   });
 
@@ -700,6 +926,30 @@ describe("SessionManager", () => {
     );
   });
 
+  test("includes structured details when a managed session path escapes the active root", async () => {
+    await seedSession(harness.codexHome, {
+      id: "session-unsafe-delete-details",
+      cwd: "/work/unsafe-delete-details",
+      startedAt: "2026-03-29T10:16:37.087Z",
+      firstUserMessage: "不要信任被篡改的路径",
+      latestAgentMessage: "删除前应该先校验路径。",
+    });
+
+    await manager.rescan();
+    updateStoredSessionPath(
+      harness.managerHome,
+      "session-unsafe-delete-details",
+      "active_path",
+      "/tmp/escape.jsonl",
+    );
+
+    await expect(manager.deleteSession("session-unsafe-delete-details")).rejects.toMatchObject({
+      name: "AppError",
+      code: "managed_session_path_outside",
+      details: { label: "active" },
+    } satisfies Partial<AppError & { details: unknown }>);
+  });
+
   test("rejects restore when a stored archive path escapes the managed archive root", async () => {
     await seedSession(harness.codexHome, {
       id: "session-unsafe-restore",
@@ -774,4 +1024,58 @@ function readAuditLogCount(managerHome: string) {
     .get() as { count: number };
   db.close();
   return row.count;
+}
+
+function readOfficialThreadTitle(codexHome: string, sessionId: string) {
+  const db = new Database(path.join(codexHome, "state_5.sqlite"));
+  const row = db
+    .prepare(
+      `
+        select title
+        from threads
+        where id = ?
+      `,
+    )
+    .get(sessionId) as { title: string } | undefined;
+  db.close();
+  return row?.title ?? null;
+}
+
+async function rewriteFirstUserMessage(filePath: string, nextMessage: string) {
+  const content = await readFile(filePath, "utf8");
+  let updated = false;
+  const nextContent = content
+    .split("\n")
+    .map((line) => {
+      if (updated || !line.trim()) {
+        return line;
+      }
+
+      try {
+        const entry = JSON.parse(line) as {
+          type?: unknown;
+          payload?: {
+            type?: unknown;
+            message?: unknown;
+          };
+        };
+
+        if (
+          entry.type !== "event_msg" ||
+          !entry.payload ||
+          entry.payload.type !== "user_message"
+        ) {
+          return line;
+        }
+
+        entry.payload.message = nextMessage;
+        updated = true;
+        return JSON.stringify(entry);
+      } catch {
+        return line;
+      }
+    })
+    .join("\n");
+
+  await writeFile(filePath, nextContent);
 }

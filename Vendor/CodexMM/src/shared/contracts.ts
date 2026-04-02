@@ -57,16 +57,19 @@ export type SessionTimelineItem =
       status: "pending" | "completed" | "errored";
     };
 
+export type SessionOfficialIssueCode =
+  | "missing_thread"
+  | "wrong_rollout_path"
+  | "archived_flag_mismatch"
+  | "missing_recent_conversation"
+  | "stale_recent_conversation"
+  | "snapshot_thread_still_present"
+  | "snapshot_recent_conversation_still_present";
+
 export type SessionOfficialState = {
   status: "synced" | "repair_needed" | "hidden";
   canAppearInCodex: boolean;
-  threadRowPresent: boolean;
-  sessionIndexPresent: boolean;
-  rolloutPathMatches: boolean;
-  archivedFlagMatches: boolean;
-  sessionIndexMatches: boolean;
-  summary: string;
-  issues: string[];
+  issueCodes: SessionOfficialIssueCode[];
 };
 
 export type SessionDetail = {
@@ -108,9 +111,18 @@ export type ApiErrorCode =
   | "unknown_session"
   | "unsupported_restore_mode";
 
+export type ApiErrorDetails = {
+  sessionId?: string;
+  label?: "active" | "archive" | "snapshot";
+  managedRoot?: string;
+  candidatePath?: string;
+  resolvedCandidatePath?: string;
+};
+
 export type ApiErrorResponse = {
   code: ApiErrorCode;
   error: string;
+  details?: ApiErrorDetails;
 };
 
 export type RestoreRequest = {
@@ -128,6 +140,7 @@ export type BatchSessionActionFailure = {
   sessionId: string;
   code?: ApiErrorCode;
   error: string;
+  details?: ApiErrorDetails;
 };
 
 export type BatchSessionActionResponse = {

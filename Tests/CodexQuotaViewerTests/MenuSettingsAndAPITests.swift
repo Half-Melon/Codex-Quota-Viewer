@@ -118,11 +118,11 @@ func settingsAccountPanelBuilderMarksCurrentAndAttentionStatesConsistently() {
     withExclusiveAppLocalization {
         AppLocalization.setPreferredLanguage(.en, preferredLanguages: ["en-US"])
         let now = Date(timeIntervalSince1970: 1_800_000_000)
-        let currentProfile = makeMenuProfile(
+        let currentProfile = makeTestProviderProfile(
             id: "current",
             displayName: "current@example.com",
             authMode: .chatgpt,
-            snapshot: makeMenuSnapshot(
+            snapshot: makeTestSnapshot(
                 email: "current@example.com",
                 primaryRemaining: 81,
                 secondaryRemaining: 79,
@@ -131,7 +131,7 @@ func settingsAccountPanelBuilderMarksCurrentAndAttentionStatesConsistently() {
             isCurrent: true,
             lastUsedAt: now
         )
-        let apiProfile = makeMenuProfile(
+        let apiProfile = makeTestProviderProfile(
             id: "api",
             displayName: "api.example.com",
             authMode: .apiKey,
@@ -144,8 +144,8 @@ func settingsAccountPanelBuilderMarksCurrentAndAttentionStatesConsistently() {
         let panelState = buildSettingsAccountPanelState(
             vaultSnapshot: AccountVaultSnapshot(
                 accounts: [
-                    makeVaultRecord(from: currentProfile),
-                    makeVaultRecord(from: apiProfile),
+                    makeTestVaultRecord(from: currentProfile),
+                    makeTestVaultRecord(from: apiProfile),
                 ]
             ),
             vaultProfiles: [apiProfile],
@@ -214,11 +214,11 @@ func allAccountsMenuItemPresentationUsesCurrentCheckmarkAndDirectSwitchForOthers
     withExclusiveAppLocalization {
         AppLocalization.setPreferredLanguage(.en, preferredLanguages: ["en-US"])
         let now = Date(timeIntervalSince1970: 1_800_000_100)
-        let current = makeMenuProfile(
+        let current = makeTestProviderProfile(
             id: "current",
             displayName: "current@example.com",
             authMode: .chatgpt,
-            snapshot: makeMenuSnapshot(
+            snapshot: makeTestSnapshot(
                 email: "current@example.com",
                 primaryRemaining: 81,
                 secondaryRemaining: 79,
@@ -227,11 +227,11 @@ func allAccountsMenuItemPresentationUsesCurrentCheckmarkAndDirectSwitchForOthers
             isCurrent: true,
             lastUsedAt: now
         )
-        let other = makeMenuProfile(
+        let other = makeTestProviderProfile(
             id: "other",
             displayName: "other@example.com",
             authMode: .chatgpt,
-            snapshot: makeMenuSnapshot(
+            snapshot: makeTestSnapshot(
                 email: "other@example.com",
                 primaryRemaining: 77,
                 secondaryRemaining: 73,
@@ -263,6 +263,276 @@ func allAccountsMenuItemPresentationUsesCurrentCheckmarkAndDirectSwitchForOthers
         #expect(otherItem.isEnabled == true)
         #expect(otherItem.triggersDirectSwitch == true)
     }
+}
+
+@Test
+func quotaOverviewMenuPresentationUsesAccessibleSingleLineRowsAndApiOnlyEmptyState() {
+    withExclusiveAppLocalization {
+        AppLocalization.setPreferredLanguage(.en, preferredLanguages: ["en-US"])
+        let now = Date(timeIntervalSince1970: 1_800_000_120)
+        let api = makeTestProviderProfile(
+            id: "api",
+            displayName: "api.example.com",
+            authMode: .apiKey,
+            snapshot: nil,
+            isCurrent: false,
+            lastUsedAt: now
+        )
+        let current = makeTestProviderProfile(
+            id: "current",
+            displayName: "current@example.com",
+            authMode: .chatgpt,
+            snapshot: makeTestSnapshot(
+                email: "current@example.com",
+                primaryRemaining: 81,
+                secondaryRemaining: 79,
+                fetchedAt: now
+            ),
+            isCurrent: true,
+            lastUsedAt: now
+        )
+        let tile = QuotaTileViewModel(
+            profile: current,
+            primaryText: "5h 81%",
+            secondaryText: "1w 79%",
+            state: .healthy
+        )
+        let state = buildQuotaOverviewState(
+            currentProfile: nil,
+            vaultProfiles: [api],
+            refreshIntervalPreset: .fiveMinutes,
+            now: now
+        )
+
+        let presentation = buildQuotaOverviewMenuItemPresentation(
+            for: tile,
+            isPerformingSafeSwitchOperation: false
+        )
+
+        #expect(presentation.title == "current@example.com · 5h 81% · 1w 79%")
+        #expect(presentation.showsCheckmark == true)
+        #expect(presentation.accessibilityLabel.contains("Current account"))
+        #expect(quotaOverviewEmptyStateMessage(for: state).contains("API accounts"))
+    }
+}
+
+@Test
+func statusItemAccessibilityDescriptionExplainsMeterStateAndStaleness() {
+    withExclusiveAppLocalization {
+        AppLocalization.setPreferredLanguage(.en, preferredLanguages: ["en-US"])
+
+        let description = statusItemAccessibilityDescription(
+            summary: "5h 81% 1w 79%",
+            style: .meter,
+            isStale: true
+        )
+
+        #expect(description.contains("Quota meter"))
+        #expect(description.contains("Data may be stale"))
+    }
+}
+
+@Test
+func statusItemPresentationBuildsMeterAndTextModesOutsideAppController() {
+    withExclusiveAppLocalization {
+        AppLocalization.setPreferredLanguage(.en, preferredLanguages: ["en-US"])
+        let now = Date(timeIntervalSince1970: 1_800_000_220)
+        let snapshot = makeTestSnapshot(
+            email: "current@example.com",
+            primaryRemaining: 81,
+            secondaryRemaining: 79,
+            fetchedAt: now
+        )
+
+        let meter = buildStatusItemPresentation(
+            snapshot: snapshot,
+            apiKeyDetails: nil,
+            statusItemStyle: .meter,
+            refreshIntervalPreset: .fiveMinutes,
+            isRefreshing: false,
+            currentError: nil,
+            lastRefreshAt: now.addingTimeInterval(-600),
+            now: now
+        )
+        let text = buildStatusItemPresentation(
+            snapshot: snapshot,
+            apiKeyDetails: nil,
+            statusItemStyle: .text,
+            refreshIntervalPreset: .fiveMinutes,
+            isRefreshing: false,
+            currentError: nil,
+            lastRefreshAt: now,
+            now: now
+        )
+
+        #expect(meter.title.isEmpty)
+        #expect(meter.accessibilityDescription.contains("Quota meter"))
+        #expect(text.title.contains("5h"))
+
+        switch meter.visualContent {
+        case .brand:
+            Issue.record("Expected a meter visual for the ChatGPT quota snapshot.")
+        case .meter(_, _, let state):
+            #expect(state == .stale)
+        }
+
+        #expect(text.visualContent == .brand)
+    }
+}
+
+@MainActor
+@Test
+func menuItemBuilderProducesStandardQuotaAndMaintenanceMenuItems() {
+    withExclusiveAppLocalization {
+        AppLocalization.setPreferredLanguage(.en, preferredLanguages: ["en-US"])
+        let now = Date(timeIntervalSince1970: 1_800_000_240)
+        let current = makeTestProviderProfile(
+            id: "current",
+            displayName: "current@example.com",
+            authMode: .chatgpt,
+            snapshot: makeTestSnapshot(
+                email: "current@example.com",
+                primaryRemaining: 81,
+                secondaryRemaining: 79,
+                fetchedAt: now
+            ),
+            isCurrent: true,
+            lastUsedAt: now
+        )
+        let other = makeTestProviderProfile(
+            id: "other",
+            displayName: "other@example.com",
+            authMode: .chatgpt,
+            snapshot: makeTestSnapshot(
+                email: "other@example.com",
+                primaryRemaining: 77,
+                secondaryRemaining: 73,
+                fetchedAt: now
+            ),
+            isCurrent: false,
+            lastUsedAt: now.addingTimeInterval(-20)
+        )
+        let state = buildQuotaOverviewState(
+            currentProfile: current,
+            vaultProfiles: [other],
+            refreshIntervalPreset: .fiveMinutes,
+            now: now
+        )
+
+        let items = buildQuotaOverviewMenuItems(
+            quotaOverviewState: state,
+            refreshIntervalPreset: .fiveMinutes,
+            isPerformingSafeSwitchOperation: false,
+            target: nil,
+            activateSavedAccountAction: #selector(NSResponder.cancelOperation(_:))
+        )
+        let maintenance = buildMaintenanceMenu(
+            isRefreshing: false,
+            isLaunchingSessionManager: false,
+            isPerformingSafeSwitchOperation: false,
+            hasRollbackRestorePoint: true,
+            target: nil,
+            refreshAction: #selector(NSResponder.cancelOperation(_:)),
+            manageSessionsAction: #selector(NSResponder.cancelOperation(_:)),
+            repairAction: #selector(NSResponder.cancelOperation(_:)),
+            rollbackAction: #selector(NSResponder.cancelOperation(_:))
+        )
+
+        #expect(items.count == state.boardTiles.count + 1)
+        #expect(items.first?.view == nil)
+        #expect(items.first?.state == .on)
+        #expect(items.first?.action == nil)
+        #expect(items[1].action == #selector(NSResponder.cancelOperation(_:)))
+        #expect(items.last?.submenu?.items.isEmpty == false)
+        #expect(maintenance.items.count == 5)
+        #expect(maintenance.items[2].isSeparatorItem == true)
+        #expect(maintenance.items.last?.isEnabled == true)
+    }
+}
+
+@MainActor
+@Test
+func settingsWindowCoordinatorBuildsPanelStateBeforeForwardingToPresenter() {
+    let presenter = SettingsPresenterSpy()
+    let coordinator = SettingsWindowCoordinator(presenter: presenter)
+    let now = Date(timeIntervalSince1970: 1_800_000_260)
+    let current = makeTestProviderProfile(
+        id: "current",
+        displayName: "current@example.com",
+        authMode: .chatgpt,
+        snapshot: makeTestSnapshot(
+            email: "current@example.com",
+            primaryRemaining: 81,
+            secondaryRemaining: 79,
+            fetchedAt: now
+        ),
+        isCurrent: true,
+        lastUsedAt: now
+    )
+    let accountPanelState = buildSettingsAccountPanelState(
+        vaultSnapshot: AccountVaultSnapshot(accounts: [makeTestVaultRecord(from: current)]),
+        vaultProfiles: [],
+        currentProviderProfile: current,
+        refreshIntervalPreset: .fiveMinutes,
+        actionsEnabled: false
+    )
+    let presentationState = SettingsWindowPresentationState(
+        settings: AppSettings(),
+        accountPanelState: accountPanelState
+    )
+
+    coordinator.update(state: presentationState)
+
+    #expect(presenter.lastUpdatedSettings != nil)
+    #expect(presenter.lastUpdatedPanelState?.actionsEnabled == false)
+    #expect(presenter.lastUpdatedPanelState?.sections.first?.items.first?.isCurrent == true)
+
+    let becameVisible = coordinator.show(
+        state: presentationState,
+        callbacks: SettingsPresenterCallbacks(
+            onSettingsChanged: { _ in },
+            onAddChatGPTAccount: {},
+            onAddAPIAccount: {},
+            onActivateAccount: { _ in },
+            onRenameAccount: { _ in },
+            onForgetAccount: { _ in },
+            onOpenVaultFolder: {},
+            onWindowClosed: {}
+        )
+    )
+
+    #expect(becameVisible == true)
+    #expect(presenter.showCallCount == 1)
+    #expect(coordinator.isVisible == true)
+}
+
+@MainActor
+@Test
+func foregroundPresentationControllerBalancesActivationPolicyAndVisibility() {
+    var appliedPolicies: [NSApplication.ActivationPolicy] = []
+    var activationCount = 0
+    var isPrimaryWindowVisible = false
+    let controller = ForegroundPresentationController(
+        setActivationPolicy: { appliedPolicies.append($0) },
+        activateApp: { activationCount += 1 },
+        isPrimaryWindowVisible: { isPrimaryWindowVisible }
+    )
+
+    controller.begin()
+    controller.begin()
+    controller.endIfPossible()
+
+    #expect(appliedPolicies == [.regular])
+    #expect(activationCount == 2)
+
+    isPrimaryWindowVisible = true
+    controller.endIfPossible()
+    #expect(appliedPolicies == [.regular])
+
+    controller.begin()
+    isPrimaryWindowVisible = false
+    controller.endIfPossible()
+    #expect(appliedPolicies == [.regular, .regular, .accessory])
 }
 
 @MainActor
@@ -549,99 +819,29 @@ private func isDescendant(_ view: NSView, of ancestor: NSView) -> Bool {
     return false
 }
 
-private func makeMenuProfile(
-    id: String,
-    displayName: String,
-    authMode: CodexAuthMode,
-    snapshot: CodexSnapshot?,
-    isCurrent: Bool,
-    lastUsedAt: Date?,
-    healthStatus: ProfileHealthStatus = .healthy
-) -> ProviderProfile {
-    let authData: Data
-    let configData: Data
-    if authMode == .apiKey {
-        authData = Data(#"{"OPENAI_API_KEY":"sk-\#(id)","auth_mode":"apikey"}"#.utf8)
-        configData = Data(
-            """
-            model_provider = "openai"
-            base_url = "https://api.example.com/v1"
-            model = "gpt-5.4"
-            """.utf8
-        )
-    } else {
-        authData = Data(#"{"auth_mode":"chatgpt","tokens":{"access_token":"token-\#(id)"}}"#.utf8)
-        configData = Data(#"model_provider = "openai""#.utf8)
+@MainActor
+private final class SettingsPresenterSpy: SettingsWindowPresenting {
+    var isVisible = false
+    var showCallCount = 0
+    var lastUpdatedSettings: AppSettings?
+    var lastUpdatedPanelState: SettingsAccountPanelState?
+
+    func update(
+        settings: AppSettings,
+        accountPanelState: SettingsAccountPanelState
+    ) {
+        lastUpdatedSettings = settings
+        lastUpdatedPanelState = accountPanelState
     }
 
-    return ProviderProfile(
-        id: id,
-        displayName: displayName,
-        source: .vault,
-        runtimeMaterial: ProfileRuntimeMaterial(authData: authData, configData: configData),
-        authMode: authMode,
-        providerID: "openai",
-        providerDisplayName: authMode == .apiKey ? "openai" : nil,
-        baseURLHost: authMode == .apiKey ? "api.example.com" : nil,
-        model: authMode == .apiKey ? "gpt-5.4" : nil,
-        snapshot: snapshot,
-        healthStatus: healthStatus,
-        errorMessage: nil,
-        isCurrent: isCurrent,
-        managedFileURLs: [],
-        lastUsedAt: lastUsedAt
-    )
-}
-
-private func makeVaultRecord(
-    from profile: ProviderProfile
-) -> VaultAccountRecord {
-    let directoryURL = URL(fileURLWithPath: "/tmp/\(profile.id)", isDirectory: true)
-    let metadata = VaultAccountMetadata(
-        id: profile.id,
-        displayName: profile.displayName,
-        authMode: profile.authMode,
-        providerID: profile.providerID,
-        baseURL: profile.baseURLHost.map { "https://\($0)/v1" },
-        model: profile.model,
-        createdAt: Date(timeIntervalSince1970: 1_700_000_000),
-        lastUsedAt: profile.lastUsedAt,
-        source: .currentRuntime,
-        runtimeKey: stableAccountIdentityKey(for: profile.runtimeMaterial)
-    )
-    return VaultAccountRecord(
-        metadata: metadata,
-        runtimeMaterial: profile.runtimeMaterial,
-        directoryURL: directoryURL,
-        metadataURL: directoryURL.appendingPathComponent("metadata.json"),
-        authURL: directoryURL.appendingPathComponent("auth.json"),
-        configURL: directoryURL.appendingPathComponent("config.toml")
-    )
-}
-
-private func makeMenuSnapshot(
-    email: String,
-    primaryRemaining: Double,
-    secondaryRemaining: Double,
-    fetchedAt: Date
-) -> CodexSnapshot {
-    CodexSnapshot(
-        account: CodexAccount(type: "chatgpt", email: email, planType: "plus"),
-        rateLimits: RateLimitSnapshot(
-            limitId: nil,
-            limitName: nil,
-            primary: RateLimitWindow(
-                usedPercent: 100 - primaryRemaining,
-                windowDurationMins: 300,
-                resetsAt: 1_800_000_360
-            ),
-            secondary: RateLimitWindow(
-                usedPercent: 100 - secondaryRemaining,
-                windowDurationMins: 10_080,
-                resetsAt: 1_800_086_400
-            ),
-            planType: "plus"
-        ),
-        fetchedAt: fetchedAt
-    )
+    func show(
+        settings: AppSettings,
+        accountPanelState: SettingsAccountPanelState,
+        callbacks: SettingsPresenterCallbacks
+    ) {
+        showCallCount += 1
+        isVisible = true
+        lastUpdatedSettings = settings
+        lastUpdatedPanelState = accountPanelState
+    }
 }

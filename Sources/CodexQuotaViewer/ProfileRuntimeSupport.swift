@@ -108,7 +108,7 @@ func stableAccountIdentityKey(for runtimeMaterial: ProfileRuntimeMaterial) -> St
 
 func stableAccountRecordID(for runtimeMaterial: ProfileRuntimeMaterial) -> String {
     let digest = SHA256.hash(data: Data(stableAccountIdentityKey(for: runtimeMaterial).utf8))
-    let hex = digest.compactMap { String(format: "%02x", $0) }.joined()
+    let hex = hexString(for: digest)
     return "acct-\(hex.prefix(16))"
 }
 
@@ -175,19 +175,11 @@ func apiKeyStatusTexts(details: APIKeyProfileDetails?) -> (String, String) {
         )
     }
 
-    let secondary = [
+    let secondary = joinedNonEmptyParts([
         details.model,
         displayHost(from: details.baseURL),
         details.keyHint,
-    ]
-    .compactMap { value -> String? in
-        guard let value,
-              !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return nil
-        }
-        return value
-    }
-    .joined(separator: " · ")
+    ])
 
     return (
         primary,
@@ -489,7 +481,7 @@ private func apiKeyIdentityDigest(from authData: Data) -> String? {
     }
 
     let digest = SHA256.hash(data: Data(apiKey.utf8))
-    return digest.compactMap { String(format: "%02x", $0) }.joined()
+    return hexString(for: digest)
 }
 
 private struct JWTClaims: Decodable {

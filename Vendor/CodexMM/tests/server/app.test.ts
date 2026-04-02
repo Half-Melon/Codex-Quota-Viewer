@@ -1,7 +1,8 @@
-import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import Database from "better-sqlite3";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
@@ -90,6 +91,56 @@ describe("createApp", () => {
     expect(response.body.record.status).toBe("active");
   });
 
+  test("returns managed session path errors with structured details over HTTP", async () => {
+    await seedSession(harness.codexHome, {
+      id: "http-archive-escape",
+      cwd: "/work/http-archive-escape",
+      startedAt: "2026-03-29T10:16:37.087Z",
+      firstUserMessage: "HTTP 归档路径不能越界",
+      latestAgentMessage: "接口应该返回结构化错误细节。",
+    });
+
+    const app = createApp({
+      codexHome: harness.codexHome,
+      managerHome: harness.managerHome,
+    });
+
+    await request(app).post("/api/sessions/rescan").send({}).expect(200);
+
+    const db = new Database(path.join(harness.managerHome, "index.db"));
+    db.prepare(
+      `
+        update sessions
+        set original_relative_path = ?
+        where id = ?
+      `,
+    ).run("../../escape.jsonl", "http-archive-escape");
+    db.close();
+
+    const managedRoot = path.join(harness.codexHome, "archived_sessions");
+    const candidatePath = path.join(managedRoot, "../../escape.jsonl");
+    const resolvedManagedRoot = await realpath(managedRoot);
+    const resolvedCandidatePath = path.join(
+      await realpath(path.dirname(candidatePath)),
+      path.basename(candidatePath),
+    );
+    const response = await request(app)
+      .post("/api/sessions/http-archive-escape/archive")
+      .send({})
+      .expect(400);
+
+    expect(response.body).toMatchObject({
+      code: "managed_session_path_outside",
+      error: "会话 archive 文件路径超出了受管目录，已拒绝继续操作。",
+      details: {
+        label: "archive",
+        managedRoot: resolvedManagedRoot,
+        candidatePath,
+        resolvedCandidatePath,
+      },
+    });
+  });
+
   test("returns paginated timeline data over HTTP", async () => {
     await seedSession(harness.codexHome, {
       id: "http-timeline-page",
@@ -131,6 +182,22 @@ describe("createApp", () => {
       text: "timeline-201",
     });
     expect(nextPageResponse.body.nextOffset).toBeNull();
+  });
+
+  test("returns structured details for unknown sessions over HTTP", async () => {
+    const app = createApp({
+      codexHome: harness.codexHome,
+      managerHome: harness.managerHome,
+    });
+
+    await request(app).post("/api/sessions/rescan").send({}).expect(200);
+    const response = await request(app).get("/api/sessions/missing-session").expect(404);
+
+    expect(response.body).toEqual({
+      code: "unknown_session",
+      error: "Unknown session: missing-session",
+      details: { sessionId: "missing-session" },
+    });
   });
 
   test("creates manager storage automatically when it does not exist", async () => {

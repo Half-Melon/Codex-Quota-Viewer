@@ -126,6 +126,105 @@ export class SessionRepository {
     return this.listSessions();
   }
 
+  saveCatalogEntry(entry: CatalogSessionEntry) {
+    const now = new Date().toISOString();
+    const existing = this.readSessionRowsByIds([entry.summary.id]).get(entry.summary.id);
+    const upsertSession = this.db.prepare(`
+      insert into sessions (
+        id, active_path, archive_path, snapshot_path, original_relative_path,
+        cwd, started_at, originator, source, cli_version, model_provider,
+        size_bytes, line_count, event_count, tool_call_count,
+        user_prompt_excerpt, latest_agent_message_excerpt, status,
+        created_at, updated_at, indexed_at
+      ) values (
+        @id, @activePath, @archivePath, @snapshotPath, @originalRelativePath,
+        @cwd, @startedAt, @originator, @source, @cliVersion, @modelProvider,
+        @sizeBytes, @lineCount, @eventCount, @toolCallCount,
+        @userPromptExcerpt, @latestAgentMessageExcerpt, @status,
+        @createdAt, @updatedAt, @indexedAt
+      )
+      on conflict(id) do update set
+        active_path = excluded.active_path,
+        archive_path = excluded.archive_path,
+        snapshot_path = excluded.snapshot_path,
+        original_relative_path = excluded.original_relative_path,
+        cwd = excluded.cwd,
+        started_at = excluded.started_at,
+        originator = excluded.originator,
+        source = excluded.source,
+        cli_version = excluded.cli_version,
+        model_provider = excluded.model_provider,
+        size_bytes = excluded.size_bytes,
+        line_count = excluded.line_count,
+        event_count = excluded.event_count,
+        tool_call_count = excluded.tool_call_count,
+        user_prompt_excerpt = excluded.user_prompt_excerpt,
+        latest_agent_message_excerpt = excluded.latest_agent_message_excerpt,
+        status = excluded.status,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        indexed_at = excluded.indexed_at
+    `);
+    const deleteTimelineItems = this.db.prepare(
+      "delete from timeline_items where session_id = ?",
+    );
+    const deleteSearchEntry = this.db.prepare(
+      "delete from session_search where session_id = ?",
+    );
+    const insertTimelineItem = this.db.prepare(`
+      insert into timeline_items (
+        session_id, ordinal, item_id, type, timestamp, text,
+        tool_name, summary, input_text, output_text, status
+      ) values (
+        @sessionId, @ordinal, @itemId, @type, @timestamp, @text,
+        @toolName, @summary, @inputText, @outputText, @status
+      )
+    `);
+    const insertSearch = this.db.prepare(`
+      insert into session_search (
+        session_id, id, cwd, user_prompt_excerpt, latest_agent_message_excerpt
+      ) values (
+        @sessionId, @id, @cwd, @userPromptExcerpt, @latestAgentMessageExcerpt
+      )
+    `);
+    const persistCatalogEntry = this.db.transaction((catalogEntry: CatalogSessionEntry) => {
+      const createdAt = existing?.created_at ?? now;
+      const updatedAt =
+        existing && !didCatalogEntryChange(existing, catalogEntry)
+          ? existing.updated_at
+          : now;
+
+      upsertSession.run({
+        ...catalogEntry.summary,
+        activePath: catalogEntry.activePath,
+        archivePath: catalogEntry.archivePath,
+        snapshotPath: catalogEntry.snapshotPath,
+        originalRelativePath: catalogEntry.originalRelativePath,
+        status: catalogEntry.status,
+        createdAt,
+        updatedAt,
+        indexedAt: now,
+      });
+
+      deleteTimelineItems.run(catalogEntry.summary.id);
+      deleteSearchEntry.run(catalogEntry.summary.id);
+      insertSearch.run({
+        sessionId: catalogEntry.summary.id,
+        id: catalogEntry.summary.id,
+        cwd: catalogEntry.summary.cwd,
+        userPromptExcerpt: catalogEntry.summary.userPromptExcerpt,
+        latestAgentMessageExcerpt: catalogEntry.summary.latestAgentMessageExcerpt,
+      });
+
+      catalogEntry.timeline.forEach((item, ordinal) => {
+        insertTimelineItem.run(toTimelineRow(catalogEntry.summary.id, ordinal, item));
+      });
+    });
+
+    persistCatalogEntry(entry);
+    return this.requireSession(entry.summary.id);
+  }
+
   updateSession(id: string, mutation: SessionMutation) {
     const existing = this.requireSession(id);
     const now = new Date().toISOString();
@@ -526,6 +625,26 @@ export class SessionRepository {
       `,
       )
       .all() as SessionRow[];
+
+    return new Map(rows.map((row) => [row.id, row]));
+  }
+
+  private readSessionRowsByIds(ids: string[]) {
+    if (ids.length === 0) {
+      return new Map<string, SessionRow>();
+    }
+
+    const placeholders = ids.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare(
+        `
+        select
+          ${SESSION_SELECT_COLUMNS}
+        from sessions
+        where id in (${placeholders})
+      `,
+      )
+      .all(...ids) as SessionRow[];
 
     return new Map(rows.map((row) => [row.id, row]));
   }

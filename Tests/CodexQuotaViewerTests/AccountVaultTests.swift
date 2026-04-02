@@ -6,9 +6,7 @@ import Testing
 @Test
 func vaultAccountStoreCreatesAPIAccountAndPersistsIndex() throws {
     let harness = try makeHarness()
-    let vault = VaultAccountStore(
-        accountsRootURL: harness.appSupportURL.appendingPathComponent("Accounts", isDirectory: true)
-    )
+    let vault = makeVaultStore(harness)
 
     let record = try vault.createAPIAccount(
         displayName: "Proxy",
@@ -35,9 +33,7 @@ func vaultAccountStoreCreatesAPIAccountAndPersistsIndex() throws {
 @Test
 func vaultAccountStoreLoadsLegacyMetadataAndRewritesWithoutLegacyFields() throws {
     let harness = try makeHarness()
-    let vault = VaultAccountStore(
-        accountsRootURL: harness.appSupportURL.appendingPathComponent("Accounts", isDirectory: true)
-    )
+    let vault = makeVaultStore(harness)
     let root = vault.accountsRootURL
     let accountID = "acct-legacy-1"
     let accountDirectory = root.appendingPathComponent(accountID, isDirectory: true)
@@ -81,6 +77,35 @@ func vaultAccountStoreLoadsLegacyMetadataAndRewritesWithoutLegacyFields() throws
     #expect(rewritten.contains("legacyCCSwitch") == false)
     #expect(rewritten.contains("isImportedFromCCSwitch") == false)
     #expect(rewritten.contains("\"source\""))
+}
+
+@Test
+func vaultAccountStoreSkipsCorruptedRecordsAndKeepsHealthyAccountsVisible() throws {
+    let harness = try makeHarness()
+    let vault = makeVaultStore(harness)
+
+    let record = try vault.createAPIAccount(
+        displayName: "Healthy",
+        apiKey: "sk-healthy",
+        baseURL: "https://api.example.com/v1",
+        model: "gpt-5.4"
+    )
+
+    let corruptedDirectory = vault.accountsRootURL.appendingPathComponent("acct-corrupted", isDirectory: true)
+    try FileManager.default.createDirectory(at: corruptedDirectory, withIntermediateDirectories: true)
+    try Data("{not-json}".utf8).write(
+        to: corruptedDirectory.appendingPathComponent("metadata.json"),
+        options: .atomic
+    )
+    try Data("broken".utf8).write(
+        to: corruptedDirectory.appendingPathComponent("auth.json"),
+        options: .atomic
+    )
+
+    let snapshot = try vault.loadSnapshot()
+
+    #expect(snapshot.accounts.count == 1)
+    #expect(snapshot.accounts.first?.id == record.id)
 }
 
 @Test
@@ -128,9 +153,7 @@ func resolveAuthModePrefersExplicitChatGPTModeOverResidualAPIKey() {
 @Test
 func vaultAccountStoreUsesStableChatGPTIdentityAcrossRefreshAndConfigDifferences() throws {
     let harness = try makeHarness()
-    let vault = VaultAccountStore(
-        accountsRootURL: harness.appSupportURL.appendingPathComponent("Accounts", isDirectory: true)
-    )
+    let vault = makeVaultStore(harness)
 
     let legacyRuntime = ProfileRuntimeMaterial(
         authData: Data(
@@ -184,75 +207,25 @@ func vaultAccountStoreUsesStableChatGPTIdentityAcrossRefreshAndConfigDifferences
 @Test
 func vaultNormalizationPlanMergesLegacyAndCurrentRuntimeDuplicates() throws {
     let harness = try makeHarness()
-    let vault = VaultAccountStore(
-        accountsRootURL: harness.appSupportURL.appendingPathComponent("Accounts", isDirectory: true)
-    )
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    encoder.dateEncodingStrategy = .iso8601
+    let vault = makeVaultStore(harness)
+    let fixture = makeChatGPTNormalizationFixture()
 
     let accountsRoot = vault.accountsRootURL
     try FileManager.default.createDirectory(at: accountsRoot, withIntermediateDirectories: true)
 
-    let legacyID = "acct-legacy-1"
-    let runtimeID = "acct-current-1"
-    let createdAt = Date(timeIntervalSince1970: 1_700_000_000)
-
-    let legacyMetadata = VaultAccountMetadata(
-        id: legacyID,
-        displayName: "Krisxu9@gmail.com",
-        authMode: .chatgpt,
-        providerID: "openai",
-        baseURL: nil,
-        model: nil,
-        createdAt: createdAt,
-        lastUsedAt: nil,
-        source: .currentRuntime,
-        runtimeKey: "legacy"
+    try writeTestVaultRecord(
+        root: accountsRoot,
+        metadata: fixture.legacyMetadata,
+        runtime: fixture.legacyRuntime,
+        encoder: fixture.encoder
     )
-    let currentMetadata = VaultAccountMetadata(
-        id: runtimeID,
-        displayName: "krisxu9@gmail.com",
-        authMode: .chatgpt,
-        providerID: "openai",
-        baseURL: "https://shell.wyzai.top",
-        model: "gpt-5.4",
-        createdAt: createdAt.addingTimeInterval(60),
-        lastUsedAt: createdAt.addingTimeInterval(120),
-        source: .currentRuntime,
-        runtimeKey: "current"
+    try writeTestVaultRecord(
+        root: accountsRoot,
+        metadata: fixture.currentMetadata,
+        runtime: fixture.currentRuntime,
+        encoder: fixture.encoder
     )
-
-    let legacyRuntime = ProfileRuntimeMaterial(
-        authData: Data(
-            """
-            {"auth_mode":"chatgpt","last_refresh":"2026-03-30T02:33:21.958042Z","tokens":{"access_token":"token-1","refresh_token":"refresh-1","account_id":"acct-9"}}
-            """.utf8
-        ),
-        configData: Data("model_provider = \"openai\"\n".utf8)
-    )
-    let currentRuntime = ProfileRuntimeMaterial(
-        authData: Data(
-            """
-            {"auth_mode":"chatgpt","last_refresh":"2026-03-31T01:45:41.950247Z","tokens":{"access_token":"token-2","refresh_token":"refresh-2","account_id":"acct-9"}}
-            """.utf8
-        ),
-        configData: Data(
-            """
-            model_provider = "custom"
-            model = "gpt-5.4"
-
-            [model_providers.custom]
-            name = "custom"
-            requires_openai_auth = true
-            base_url = "https://shell.wyzai.top/v1"
-            """.utf8
-        )
-    )
-
-    try writeVaultRecord(root: accountsRoot, metadata: legacyMetadata, runtime: legacyRuntime, encoder: encoder)
-    try writeVaultRecord(root: accountsRoot, metadata: currentMetadata, runtime: currentRuntime, encoder: encoder)
-    try encoder.encode([legacyMetadata, currentMetadata]).write(to: vault.indexURL)
+    try fixture.encoder.encode([fixture.legacyMetadata, fixture.currentMetadata]).write(to: vault.indexURL)
 
     let plan = try #require(try vault.normalizationPlan())
     try vault.applyNormalizationPlan(plan)
@@ -260,7 +233,7 @@ func vaultNormalizationPlanMergesLegacyAndCurrentRuntimeDuplicates() throws {
     let snapshot = try vault.loadSnapshot()
     #expect(plan.obsoleteRecordIDs.count == 2)
     #expect(snapshot.accounts.count == 1)
-    #expect(snapshot.accounts.first?.id == vault.accountID(for: currentRuntime))
+    #expect(snapshot.accounts.first?.id == vault.accountID(for: fixture.currentRuntime))
     #expect(snapshot.accounts.first?.metadata.displayName == "Krisxu9@gmail.com")
     #expect(snapshot.accounts.first?.runtimeMaterial.configData.flatMap { try? $0.utf8String() } == "model_provider = \"openai\"\nmodel = \"gpt-5.4\"\n")
 }
@@ -268,9 +241,7 @@ func vaultNormalizationPlanMergesLegacyAndCurrentRuntimeDuplicates() throws {
 @Test
 func vaultNormalizationPlanRewritesLegacyOpenAICompatibleAPIConfigToWorkingCustomProviderShape() throws {
     let harness = try makeHarness()
-    let vault = VaultAccountStore(
-        accountsRootURL: harness.appSupportURL.appendingPathComponent("Accounts", isDirectory: true)
-    )
+    let vault = makeVaultStore(harness)
 
     let legacyRuntime = ProfileRuntimeMaterial(
         authData: Data(#"{"OPENAI_API_KEY":"sk-test-legacy"}"#.utf8),
@@ -308,17 +279,11 @@ func vaultNormalizationPlanRewritesLegacyOpenAICompatibleAPIConfigToWorkingCusto
 @Test
 func accountOnboardingCoordinatorImportsChatGPTLoginFromTemporaryCodexHome() async throws {
     let harness = try makeHarness()
-    let vault = VaultAccountStore(
-        accountsRootURL: harness.appSupportURL.appendingPathComponent("Accounts", isDirectory: true)
-    )
+    let vault = makeVaultStore(harness)
     let coordinator = AccountOnboardingCoordinator(
         vaultStore: vault,
-        backupManager: BackupManager(
-            backupsRootURL: harness.appSupportURL.appendingPathComponent("SwitchBackups", isDirectory: true)
-        ),
-        protectedFilesProvider: { accountIDs in
-            [vault.indexURL] + vault.protectedMutationFileURLs(forAccountIDs: accountIDs)
-        },
+        backupManager: makeBackupManager(harness),
+        protectedFilesProvider: makeProtectedFilesProvider(for: vault),
         processRunner: { command in
             try FileManager.default.createDirectory(at: command.codexHomeURL, withIntermediateDirectories: true)
             try Data(#"{"auth_mode":"chatgpt","tokens":{"access_token":"token-1","refresh_token":"refresh-1","account_id":"acct-1"}}"#.utf8)
@@ -345,17 +310,11 @@ func accountOnboardingCoordinatorImportsChatGPTLoginFromTemporaryCodexHome() asy
 @Test
 func accountOnboardingCoordinatorCreatesOpenAICompatibleAPIAccountWithCustomProviderConfig() async throws {
     let harness = try makeHarness()
-    let vault = VaultAccountStore(
-        accountsRootURL: harness.appSupportURL.appendingPathComponent("Accounts", isDirectory: true)
-    )
+    let vault = makeVaultStore(harness)
     let coordinator = AccountOnboardingCoordinator(
         vaultStore: vault,
-        backupManager: BackupManager(
-            backupsRootURL: harness.appSupportURL.appendingPathComponent("SwitchBackups", isDirectory: true)
-        ),
-        protectedFilesProvider: { accountIDs in
-            [vault.indexURL] + vault.protectedMutationFileURLs(forAccountIDs: accountIDs)
-        },
+        backupManager: makeBackupManager(harness),
+        protectedFilesProvider: makeProtectedFilesProvider(for: vault),
         apiModelsProbe: ProbeStub(
             result: APIAccountProbeResponse(
                 modelIDs: ["gpt-5.4"],
@@ -381,17 +340,49 @@ func accountOnboardingCoordinatorCreatesOpenAICompatibleAPIAccountWithCustomProv
     #expect(configText.contains("model = \"gpt-5.4\""))
 }
 
-private func writeVaultRecord(
-    root: URL,
-    metadata: VaultAccountMetadata,
-    runtime: ProfileRuntimeMaterial,
-    encoder: JSONEncoder
-) throws {
-    let directory = root.appendingPathComponent(metadata.id, isDirectory: true)
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    try encoder.encode(metadata).write(to: directory.appendingPathComponent("metadata.json"))
-    try runtime.authData.write(to: directory.appendingPathComponent("auth.json"))
-    try runtime.configData?.write(to: directory.appendingPathComponent("config.toml"))
+@Test
+func vaultAccountRecordWriterHardensVaultAuthAndConfigPermissions() throws {
+    let harness = try makeHarness()
+    let directoryURL = harness.appSupportURL.appendingPathComponent("Accounts/acct-secure", isDirectory: true)
+    let record = VaultAccountRecord(
+        metadata: VaultAccountMetadata(
+            id: "acct-secure",
+            displayName: "Secure Account",
+            authMode: .apiKey,
+            providerID: "openai",
+            baseURL: "https://api.example.com/v1",
+            model: "gpt-5.4",
+            createdAt: Date(timeIntervalSince1970: 1_800_000_000),
+            lastUsedAt: nil,
+            source: .manualAPI,
+            runtimeKey: "secure-runtime"
+        ),
+        runtimeMaterial: ProfileRuntimeMaterial(
+            authData: Data(#"{"OPENAI_API_KEY":"sk-secure","auth_mode":"apikey"}"#.utf8),
+            configData: Data("model_provider = \"openai\"\nmodel = \"gpt-5.4\"\n".utf8)
+        ),
+        directoryURL: directoryURL,
+        metadataURL: directoryURL.appendingPathComponent("metadata.json"),
+        authURL: directoryURL.appendingPathComponent("auth.json"),
+        configURL: directoryURL.appendingPathComponent("config.toml")
+    )
+
+    try VaultAccountRecordWriter().write(record)
+
+    let fileManager = FileManager.default
+    let directoryPermissions = try #require(
+        fileManager.attributesOfItem(atPath: directoryURL.path)[.posixPermissions] as? NSNumber
+    )
+    let authPermissions = try #require(
+        fileManager.attributesOfItem(atPath: record.authURL.path)[.posixPermissions] as? NSNumber
+    )
+    let configPermissions = try #require(
+        fileManager.attributesOfItem(atPath: record.configURL.path)[.posixPermissions] as? NSNumber
+    )
+
+    #expect(directoryPermissions.intValue == 0o700)
+    #expect(authPermissions.intValue == 0o600)
+    #expect(configPermissions.intValue == 0o600)
 }
 
 private struct ProbeStub: APIModelsProbing {
@@ -414,17 +405,11 @@ private struct FailingProbeStub: APIModelsProbing {
 @Test
 func accountOnboardingCoordinatorRejectsUnauthorizedProbeWithoutFallback() async throws {
     let harness = try makeHarness()
-    let vault = VaultAccountStore(
-        accountsRootURL: harness.appSupportURL.appendingPathComponent("Accounts", isDirectory: true)
-    )
+    let vault = makeVaultStore(harness)
     let coordinator = AccountOnboardingCoordinator(
         vaultStore: vault,
-        backupManager: BackupManager(
-            backupsRootURL: harness.appSupportURL.appendingPathComponent("SwitchBackups", isDirectory: true)
-        ),
-        protectedFilesProvider: { accountIDs in
-            [vault.indexURL] + vault.protectedMutationFileURLs(forAccountIDs: accountIDs)
-        },
+        backupManager: makeBackupManager(harness),
+        protectedFilesProvider: makeProtectedFilesProvider(for: vault),
         apiModelsProbe: FailingProbeStub(error: APIModelsProbeError.authenticationFailed)
     )
 
@@ -442,9 +427,7 @@ func accountOnboardingCoordinatorRejectsUnauthorizedProbeWithoutFallback() async
 @Test
 func accountOnboardingCoordinatorUsesCodexExecutableFromPATHWhenBundledExecutableMissing() async throws {
     let harness = try makeHarness()
-    let vault = VaultAccountStore(
-        accountsRootURL: harness.appSupportURL.appendingPathComponent("Accounts", isDirectory: true)
-    )
+    let vault = makeVaultStore(harness)
     let binDirectory = harness.homeURL.appendingPathComponent("bin", isDirectory: true)
     try FileManager.default.createDirectory(at: binDirectory, withIntermediateDirectories: true)
     let pathExecutable = binDirectory.appendingPathComponent("codex", isDirectory: false)
@@ -456,12 +439,8 @@ func accountOnboardingCoordinatorUsesCodexExecutableFromPATHWhenBundledExecutabl
 
     let coordinator = AccountOnboardingCoordinator(
         vaultStore: vault,
-        backupManager: BackupManager(
-            backupsRootURL: harness.appSupportURL.appendingPathComponent("SwitchBackups", isDirectory: true)
-        ),
-        protectedFilesProvider: { accountIDs in
-            [vault.indexURL] + vault.protectedMutationFileURLs(forAccountIDs: accountIDs)
-        },
+        backupManager: makeBackupManager(harness),
+        protectedFilesProvider: makeProtectedFilesProvider(for: vault),
         codexExecutableURL: harness.homeURL.appendingPathComponent("missing-codex", isDirectory: false),
         bundledCodexExecutableURL: harness.homeURL.appendingPathComponent("missing-bundled-codex", isDirectory: false),
         processEnvironment: ["PATH": binDirectory.path],

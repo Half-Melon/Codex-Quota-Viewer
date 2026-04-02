@@ -59,3 +59,17 @@ struct RefreshRequestState: Equatable {
         return shouldRunAgain
     }
 }
+
+struct DeferredPresentationRefreshState: Equatable {
+    private(set) var hasPendingRefresh = false
+
+    mutating func requestRefresh() {
+        hasPendingRefresh = true
+    }
+
+    mutating func takePendingRefresh() -> Bool {
+        let shouldRefresh = hasPendingRefresh
+        hasPendingRefresh = false
+        return shouldRefresh
+    }
+}

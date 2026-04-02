@@ -12,7 +12,7 @@ func vaultQuotaCacheStorePersistsSnapshotRecords() throws {
     let records = [
         VaultQuotaSnapshotRecord(
             accountID: "acct-chatgpt",
-            snapshot: makeSnapshot(email: "primary@example.com", primaryRemaining: 72, secondaryRemaining: 61, fetchedAt: now),
+            snapshot: makeTestSnapshot(email: "primary@example.com", primaryRemaining: 72, secondaryRemaining: 61, fetchedAt: now),
             healthStatus: .healthy,
             errorSummary: nil,
             fetchedAt: now,
@@ -42,74 +42,75 @@ func quotaOverviewStatePrioritizesAvailableProfilesAndLimitsOverviewToFiveRows()
         AppLocalization.setPreferredLanguage(.en, preferredLanguages: ["en-US"])
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let staleTime = now.addingTimeInterval(-1_000)
-        let current = makeProfile(
+        let current = makeTestProviderProfile(
             id: "current",
             displayName: "current@example.com",
             authMode: .chatgpt,
-            snapshot: makeSnapshot(email: "current@example.com", primaryRemaining: 84, secondaryRemaining: 74, fetchedAt: now),
+            snapshot: makeTestSnapshot(email: "current@example.com", primaryRemaining: 84, secondaryRemaining: 74, fetchedAt: now),
+            isCurrent: true,
             lastUsedAt: now
         )
-        let needsLogin = makeProfile(
+        let needsLogin = makeTestProviderProfile(
             id: "needs-login",
             displayName: "needs-login@example.com",
             authMode: .chatgpt,
             snapshot: nil,
+            lastUsedAt: now.addingTimeInterval(-10),
             healthStatus: .needsLogin,
-            errorMessage: "Sign in required",
-            lastUsedAt: now.addingTimeInterval(-10)
+            errorMessage: "Sign in required"
         )
-        let expired = makeProfile(
+        let expired = makeTestProviderProfile(
             id: "expired",
             displayName: "expired@example.com",
             authMode: .chatgpt,
             snapshot: nil,
+            lastUsedAt: now.addingTimeInterval(-20),
             healthStatus: .expired,
-            errorMessage: "Session expired",
-            lastUsedAt: now.addingTimeInterval(-20)
+            errorMessage: "Session expired"
         )
-        let exhausted = makeProfile(
+        let exhausted = makeTestProviderProfile(
             id: "exhausted",
             displayName: "exhausted@example.com",
             authMode: .chatgpt,
-            snapshot: makeSnapshot(email: "exhausted@example.com", primaryRemaining: 0, secondaryRemaining: 44, fetchedAt: now),
+            snapshot: makeTestSnapshot(email: "exhausted@example.com", primaryRemaining: 0, secondaryRemaining: 44, fetchedAt: now),
             lastUsedAt: now.addingTimeInterval(-30)
         )
-        let stale = makeProfile(
+        let stale = makeTestProviderProfile(
             id: "stale",
             displayName: "stale@example.com",
             authMode: .chatgpt,
-            snapshot: makeSnapshot(email: "stale@example.com", primaryRemaining: 65, secondaryRemaining: 58, fetchedAt: staleTime),
+            snapshot: makeTestSnapshot(email: "stale@example.com", primaryRemaining: 65, secondaryRemaining: 58, fetchedAt: staleTime),
             lastUsedAt: now.addingTimeInterval(-40)
         )
-        let healthyA = makeProfile(
+        let healthyA = makeTestProviderProfile(
             id: "healthy-a",
             displayName: "healthy-a@example.com",
             authMode: .chatgpt,
-            snapshot: makeSnapshot(email: "healthy-a@example.com", primaryRemaining: 76, secondaryRemaining: 67, fetchedAt: now),
+            snapshot: makeTestSnapshot(email: "healthy-a@example.com", primaryRemaining: 76, secondaryRemaining: 67, fetchedAt: now),
             lastUsedAt: now.addingTimeInterval(-50)
         )
-        let healthyB = makeProfile(
+        let healthyB = makeTestProviderProfile(
             id: "healthy-b",
             displayName: "healthy-b@example.com",
             authMode: .chatgpt,
-            snapshot: makeSnapshot(email: "healthy-b@example.com", primaryRemaining: 92, secondaryRemaining: 88, fetchedAt: now),
+            snapshot: makeTestSnapshot(email: "healthy-b@example.com", primaryRemaining: 92, secondaryRemaining: 88, fetchedAt: now),
             lastUsedAt: now.addingTimeInterval(-60)
         )
-        let healthyHidden = makeProfile(
+        let healthyHidden = makeTestProviderProfile(
             id: "healthy-hidden",
             displayName: "healthy-hidden@example.com",
             authMode: .chatgpt,
-            snapshot: makeSnapshot(email: "healthy-hidden@example.com", primaryRemaining: 91, secondaryRemaining: 77, fetchedAt: now),
+            snapshot: makeTestSnapshot(email: "healthy-hidden@example.com", primaryRemaining: 91, secondaryRemaining: 77, fetchedAt: now),
             lastUsedAt: now.addingTimeInterval(-70)
         )
-        let api = makeProfile(
+        let api = makeTestProviderProfile(
             id: "api",
             displayName: "api account",
             authMode: .apiKey,
             snapshot: nil,
+            lastUsedAt: now.addingTimeInterval(-80),
             healthStatus: .healthy,
-            errorMessage: nil,
-            lastUsedAt: now.addingTimeInterval(-80)
+            errorMessage: nil
         )
 
         let state = buildQuotaOverviewState(
@@ -131,37 +132,38 @@ func quotaOverviewStateBuildsAllAccountsSections() {
     withExclusiveAppLocalization {
         AppLocalization.setPreferredLanguage(.en, preferredLanguages: ["en-US"])
         let now = Date(timeIntervalSince1970: 1_800_000_100)
-        let current = makeProfile(
+        let current = makeTestProviderProfile(
             id: "current",
             displayName: "current@example.com",
             authMode: .chatgpt,
-            snapshot: makeSnapshot(email: "current@example.com", primaryRemaining: 81, secondaryRemaining: 79, fetchedAt: now),
+            snapshot: makeTestSnapshot(email: "current@example.com", primaryRemaining: 81, secondaryRemaining: 79, fetchedAt: now),
+            isCurrent: true,
             lastUsedAt: now
         )
-        let exhausted = makeProfile(
+        let exhausted = makeTestProviderProfile(
             id: "exhausted",
             displayName: "exhausted@example.com",
             authMode: .chatgpt,
-            snapshot: makeSnapshot(email: "exhausted@example.com", primaryRemaining: 0, secondaryRemaining: 20, fetchedAt: now),
+            snapshot: makeTestSnapshot(email: "exhausted@example.com", primaryRemaining: 0, secondaryRemaining: 20, fetchedAt: now),
+            lastUsedAt: now.addingTimeInterval(-10),
             healthStatus: .healthy,
-            errorMessage: nil,
-            lastUsedAt: now.addingTimeInterval(-10)
+            errorMessage: nil
         )
-        let healthy = makeProfile(
+        let healthy = makeTestProviderProfile(
             id: "healthy",
             displayName: "healthy@example.com",
             authMode: .chatgpt,
-            snapshot: makeSnapshot(email: "healthy@example.com", primaryRemaining: 66, secondaryRemaining: 64, fetchedAt: now),
+            snapshot: makeTestSnapshot(email: "healthy@example.com", primaryRemaining: 66, secondaryRemaining: 64, fetchedAt: now),
             lastUsedAt: now.addingTimeInterval(-20)
         )
-        let api = makeProfile(
+        let api = makeTestProviderProfile(
             id: "api",
             displayName: "api account",
             authMode: .apiKey,
             snapshot: nil,
+            lastUsedAt: now.addingTimeInterval(-30),
             healthStatus: .healthy,
-            errorMessage: nil,
-            lastUsedAt: now.addingTimeInterval(-30)
+            errorMessage: nil
         )
 
         let state = buildQuotaOverviewState(
@@ -183,26 +185,34 @@ func quotaOverviewStateBuildsAllAccountsSections() {
 func vaultQuotaRefreshCoordinatorRefreshesChatGPTAccountEvenIfCachedAsCurrent() async {
     let now = Date(timeIntervalSince1970: 1_800_000_100)
     let refreshedAt = now.addingTimeInterval(120)
-    let currentRuntime = makeRuntimeMaterial(id: "current-runtime", authMode: .chatgpt)
-    let staleRuntime = makeRuntimeMaterial(id: "stale-runtime", authMode: .chatgpt)
-    let currentRecord = makeVaultRecord(
-        id: stableAccountRecordID(for: currentRuntime),
-        displayName: "current@example.com",
-        authMode: .chatgpt,
-        runtimeMaterial: currentRuntime
+    let currentRuntime = makeTestRuntimeMaterial(id: "current-runtime", authMode: .chatgpt)
+    let staleRuntime = makeTestRuntimeMaterial(id: "stale-runtime", authMode: .chatgpt)
+    let currentRecord = makeTestVaultRecord(
+        from: makeTestProviderProfile(
+            id: stableAccountRecordID(for: currentRuntime),
+            displayName: "current@example.com",
+            authMode: .chatgpt,
+            snapshot: nil,
+            runtimeMaterial: currentRuntime
+        ),
+        createdAt: Date(timeIntervalSince1970: 1_800_000_000)
     )
-    let staleRecord = makeVaultRecord(
-        id: stableAccountRecordID(for: staleRuntime),
-        displayName: "stale@example.com",
-        authMode: .chatgpt,
-        runtimeMaterial: staleRuntime
+    let staleRecord = makeTestVaultRecord(
+        from: makeTestProviderProfile(
+            id: stableAccountRecordID(for: staleRuntime),
+            displayName: "stale@example.com",
+            authMode: .chatgpt,
+            snapshot: nil,
+            runtimeMaterial: staleRuntime
+        ),
+        createdAt: Date(timeIntervalSince1970: 1_800_000_000)
     )
     let currentProfile = buildProviderProfile(
         id: currentRecord.id,
         fallbackDisplayName: "current@example.com",
         source: .current,
         runtimeMaterial: currentRuntime,
-        snapshot: makeSnapshot(
+        snapshot: makeTestSnapshot(
             email: "current@example.com",
             primaryRemaining: 81,
             secondaryRemaining: 79,
@@ -218,7 +228,7 @@ func vaultQuotaRefreshCoordinatorRefreshesChatGPTAccountEvenIfCachedAsCurrent() 
     let coordinator = VaultQuotaRefreshCoordinator { runtimeMaterial in
         fetchCount += 1
         #expect(stableAccountRecordID(for: runtimeMaterial) == staleRecord.id)
-        return makeSnapshot(
+        return makeTestSnapshot(
             email: "refreshed@example.com",
             primaryRemaining: 68,
             secondaryRemaining: 55,
@@ -235,7 +245,7 @@ func vaultQuotaRefreshCoordinatorRefreshesChatGPTAccountEvenIfCachedAsCurrent() 
                 cachedRecords: [
                     VaultQuotaSnapshotRecord(
                         accountID: staleRecord.id,
-                        snapshot: makeSnapshot(
+                        snapshot: makeTestSnapshot(
                             email: "stale@example.com",
                             primaryRemaining: 10,
                             secondaryRemaining: 5,
@@ -270,19 +280,23 @@ func vaultQuotaRefreshCoordinatorRefreshesChatGPTAccountEvenIfCachedAsCurrent() 
 @Test
 func vaultQuotaRefreshCoordinatorDropsCachedAccountsThatAreNoLongerSaved() async {
     let now = Date(timeIntervalSince1970: 1_800_000_200)
-    let currentRuntime = makeRuntimeMaterial(id: "current-runtime", authMode: .chatgpt)
-    let currentRecord = makeVaultRecord(
-        id: stableAccountRecordID(for: currentRuntime),
-        displayName: "current@example.com",
-        authMode: .chatgpt,
-        runtimeMaterial: currentRuntime
+    let currentRuntime = makeTestRuntimeMaterial(id: "current-runtime", authMode: .chatgpt)
+    let currentRecord = makeTestVaultRecord(
+        from: makeTestProviderProfile(
+            id: stableAccountRecordID(for: currentRuntime),
+            displayName: "current@example.com",
+            authMode: .chatgpt,
+            snapshot: nil,
+            runtimeMaterial: currentRuntime
+        ),
+        createdAt: Date(timeIntervalSince1970: 1_800_000_000)
     )
     let currentProfile = buildProviderProfile(
         id: currentRecord.id,
         fallbackDisplayName: "current@example.com",
         source: .current,
         runtimeMaterial: currentRuntime,
-        snapshot: makeSnapshot(
+        snapshot: makeTestSnapshot(
             email: "current@example.com",
             primaryRemaining: 81,
             secondaryRemaining: 79,
@@ -295,7 +309,7 @@ func vaultQuotaRefreshCoordinatorDropsCachedAccountsThatAreNoLongerSaved() async
     )
     let coordinator = VaultQuotaRefreshCoordinator { _ in
         Issue.record("snapshotFetcher should not run for the current-only request")
-        return makeSnapshot(
+        return makeTestSnapshot(
             email: "unexpected@example.com",
             primaryRemaining: 0,
             secondaryRemaining: 0,
@@ -312,7 +326,7 @@ func vaultQuotaRefreshCoordinatorDropsCachedAccountsThatAreNoLongerSaved() async
                 cachedRecords: [
                     VaultQuotaSnapshotRecord(
                         accountID: "ghost-account",
-                        snapshot: makeSnapshot(
+                        snapshot: makeTestSnapshot(
                             email: "ghost@example.com",
                             primaryRemaining: 22,
                             secondaryRemaining: 18,
@@ -339,19 +353,74 @@ func vaultQuotaRefreshCoordinatorDropsCachedAccountsThatAreNoLongerSaved() async
     #expect(records.first?.accountID == currentRecord.id)
 }
 
+@MainActor
+@Test
+func vaultQuotaRefreshCoordinatorCoalescesEquivalentRequestsWithoutSecondFetchRound() async {
+    let now = Date(timeIntervalSince1970: 1_800_000_220)
+    let runtimeMaterial = makeTestRuntimeMaterial(id: "coalesced-runtime", authMode: .chatgpt)
+    let record = makeTestVaultRecord(
+        from: makeTestProviderProfile(
+            id: stableAccountRecordID(for: runtimeMaterial),
+            displayName: "coalesced@example.com",
+            authMode: .chatgpt,
+            snapshot: nil,
+            runtimeMaterial: runtimeMaterial
+        ),
+        createdAt: Date(timeIntervalSince1970: 1_800_000_000)
+    )
+    var fetchCount = 0
+    let coordinator = VaultQuotaRefreshCoordinator { _ in
+        fetchCount += 1
+        try await Task.sleep(nanoseconds: 40_000_000)
+        return makeTestSnapshot(
+            email: "coalesced@example.com",
+            primaryRemaining: 64,
+            secondaryRemaining: 52,
+            fetchedAt: now
+        )
+    }
+    let request = VaultQuotaRefreshCoordinator.Request(
+        currentProfile: nil,
+        vaultAccounts: [record],
+        cachedRecords: []
+    )
+
+    let records = await withCheckedContinuation { continuation in
+        var resumed = false
+        coordinator.requestRefresh(
+            request,
+            onUpdate: { _ in }
+        ) { _ in
+            Issue.record("The superseded completion handler should not fire.")
+        }
+        coordinator.requestRefresh(
+            request,
+            onUpdate: { _ in }
+        ) { latest in
+            guard !resumed else { return }
+            resumed = true
+            continuation.resume(returning: latest)
+        }
+    }
+
+    #expect(fetchCount == 1)
+    #expect(records.count == 1)
+    #expect(records.first?.accountID == record.id)
+}
+
 @Test
 func exhaustedAccountMenuTextShowsResetScheduleInsteadOfPercentages() {
     withExclusiveAppLocalization {
         AppLocalization.setPreferredLanguage(.en, preferredLanguages: ["en-US"])
         let now = Date(timeIntervalSince1970: 1_800_000_100)
-        let exhausted = makeProfile(
+        let exhausted = makeTestProviderProfile(
             id: "exhausted",
             displayName: "exhausted@example.com",
             authMode: .chatgpt,
-            snapshot: makeSnapshot(email: "exhausted@example.com", primaryRemaining: 0, secondaryRemaining: 20, fetchedAt: now),
+            snapshot: makeTestSnapshot(email: "exhausted@example.com", primaryRemaining: 0, secondaryRemaining: 20, fetchedAt: now),
+            lastUsedAt: now,
             healthStatus: .healthy,
-            errorMessage: nil,
-            lastUsedAt: now
+            errorMessage: nil
         )
 
         let text = allAccountsMenuText(
@@ -408,7 +477,7 @@ func quotaOverviewDeduplicatesCurrentAndSavedProfilesByStableIdentity() {
         fallbackDisplayName: "current@example.com",
         source: .current,
         runtimeMaterial: currentRuntime,
-        snapshot: makeSnapshot(
+        snapshot: makeTestSnapshot(
             email: "current@example.com",
             primaryRemaining: 81,
             secondaryRemaining: 72,
@@ -450,18 +519,19 @@ func freeWeeklyOnlyAccountUsesWeeklyLabelsAndExhaustedSection() {
     withExclusiveAppLocalization {
         AppLocalization.setPreferredLanguage(.en, preferredLanguages: ["en-US"])
         let now = Date(timeIntervalSince1970: 1_800_000_100)
-        let free = makeProfile(
+        let free = makeTestProviderProfile(
             id: "free",
             displayName: "ai.krisxu@gmail.com",
             authMode: .chatgpt,
-            snapshot: makeFreeWeeklySnapshot(
+            snapshot: makeTestFreeWeeklySnapshot(
                 email: "ai.krisxu@gmail.com",
                 weeklyRemaining: 0,
                 fetchedAt: now
             ),
+            isCurrent: true,
+            lastUsedAt: now,
             healthStatus: .healthy,
-            errorMessage: nil,
-            lastUsedAt: now
+            errorMessage: nil
         )
 
         let state = buildQuotaOverviewState(
@@ -493,18 +563,19 @@ func freeWeeklyOnlyAccountWithQuotaRemainsAvailable() {
     withExclusiveAppLocalization {
         AppLocalization.setPreferredLanguage(.en, preferredLanguages: ["en-US"])
         let now = Date(timeIntervalSince1970: 1_800_000_200)
-        let free = makeProfile(
+        let free = makeTestProviderProfile(
             id: "free",
             displayName: "ai.krisxu@gmail.com",
             authMode: .chatgpt,
-            snapshot: makeFreeWeeklySnapshot(
+            snapshot: makeTestFreeWeeklySnapshot(
                 email: "ai.krisxu@gmail.com",
                 weeklyRemaining: 63,
                 fetchedAt: now
             ),
+            isCurrent: true,
+            lastUsedAt: now,
             healthStatus: .healthy,
-            errorMessage: nil,
-            lastUsedAt: now
+            errorMessage: nil
         )
 
         let state = buildQuotaOverviewState(
@@ -527,140 +598,4 @@ func freeWeeklyOnlyAccountWithQuotaRemainsAvailable() {
         )
         #expect(text == "ai.krisxu@gmail.com · 1w 63%")
     }
-}
-
-private func makeProfile(
-    id: String,
-    displayName: String,
-    authMode: CodexAuthMode,
-    snapshot: CodexSnapshot?,
-    healthStatus: ProfileHealthStatus = .healthy,
-    errorMessage: String? = nil,
-    lastUsedAt: Date? = nil
-) -> ProviderProfile {
-    let authData: Data
-    let configData: Data
-    if authMode == .apiKey {
-        authData = Data(#"{"OPENAI_API_KEY":"sk-\#(id)","auth_mode":"apikey"}"#.utf8)
-        configData = Data("""
-        model_provider = "openai"
-        base_url = "https://api.example.com/v1"
-        model = "gpt-5.4"
-        """.utf8)
-    } else {
-        authData = Data(#"{"auth_mode":"chatgpt","tokens":{"access_token":"token-\#(id)"}}"#.utf8)
-        configData = Data(#"model_provider = "openai""#.utf8)
-    }
-
-    return ProviderProfile(
-        id: id,
-        displayName: displayName,
-        source: .vault,
-        runtimeMaterial: ProfileRuntimeMaterial(
-            authData: authData,
-            configData: configData
-        ),
-        authMode: authMode,
-        providerID: authMode == .apiKey ? "openai" : "openai",
-        providerDisplayName: authMode == .apiKey ? "openai" : nil,
-        baseURLHost: authMode == .apiKey ? "api.example.com" : nil,
-        model: authMode == .apiKey ? "gpt-5.4" : nil,
-        snapshot: snapshot,
-        healthStatus: healthStatus,
-        errorMessage: errorMessage,
-        isCurrent: id == "current",
-        managedFileURLs: [],
-        lastUsedAt: lastUsedAt
-    )
-}
-
-private func makeRuntimeMaterial(id: String, authMode: CodexAuthMode) -> ProfileRuntimeMaterial {
-    let authData: Data
-    let configData: Data
-    if authMode == .apiKey {
-        authData = Data(#"{"OPENAI_API_KEY":"sk-\#(id)","auth_mode":"apikey"}"#.utf8)
-        configData = Data(
-            """
-            model_provider = "openai"
-            base_url = "https://api.example.com/v1"
-            model = "gpt-5.4"
-            """.utf8
-        )
-    } else {
-        authData = Data(#"{"auth_mode":"chatgpt","tokens":{"access_token":"token-\#(id)","account_id":"\#(id)"}}"#.utf8)
-        configData = Data(#"model_provider = "openai""#.utf8)
-    }
-
-    return ProfileRuntimeMaterial(authData: authData, configData: configData)
-}
-
-private func makeVaultRecord(
-    id: String,
-    displayName: String,
-    authMode: CodexAuthMode,
-    runtimeMaterial: ProfileRuntimeMaterial
-) -> VaultAccountRecord {
-    let directoryURL = URL(fileURLWithPath: "/tmp/\(id)", isDirectory: true)
-    let metadata = VaultAccountMetadata(
-        id: id,
-        displayName: displayName,
-        authMode: authMode,
-        providerID: authMode == .apiKey ? "openai" : "openai",
-        baseURL: authMode == .apiKey ? "https://api.example.com/v1" : nil,
-        model: authMode == .apiKey ? "gpt-5.4" : nil,
-        createdAt: Date(timeIntervalSince1970: 1_800_000_000),
-        lastUsedAt: nil,
-        source: .currentRuntime,
-        runtimeKey: stableAccountIdentityKey(for: runtimeMaterial)
-    )
-
-    return VaultAccountRecord(
-        metadata: metadata,
-        runtimeMaterial: runtimeMaterial,
-        directoryURL: directoryURL,
-        metadataURL: directoryURL.appendingPathComponent("metadata.json"),
-        authURL: directoryURL.appendingPathComponent("auth.json"),
-        configURL: directoryURL.appendingPathComponent("config.toml")
-    )
-}
-
-private func makeSnapshot(
-    email: String,
-    primaryRemaining: Double,
-    secondaryRemaining: Double,
-    fetchedAt: Date
-) -> CodexSnapshot {
-    CodexSnapshot(
-        account: CodexAccount(type: "chatgpt", email: email, planType: "plus"),
-        rateLimits: RateLimitSnapshot(
-            limitId: nil,
-            limitName: nil,
-            primary: RateLimitWindow(usedPercent: 100 - primaryRemaining, windowDurationMins: 300, resetsAt: 1_800_000_360),
-            secondary: RateLimitWindow(usedPercent: 100 - secondaryRemaining, windowDurationMins: 10_080, resetsAt: 1_800_086_400),
-            planType: "plus"
-        ),
-        fetchedAt: fetchedAt
-    )
-}
-
-private func makeFreeWeeklySnapshot(
-    email: String,
-    weeklyRemaining: Double,
-    fetchedAt: Date
-) -> CodexSnapshot {
-    CodexSnapshot(
-        account: CodexAccount(type: "chatgpt", email: email, planType: "free"),
-        rateLimits: RateLimitSnapshot(
-            limitId: "codex",
-            limitName: nil,
-            primary: RateLimitWindow(
-                usedPercent: 100 - weeklyRemaining,
-                windowDurationMins: 10_080,
-                resetsAt: 1_800_086_400
-            ),
-            secondary: nil,
-            planType: "free"
-        ),
-        fetchedAt: fetchedAt
-    )
 }

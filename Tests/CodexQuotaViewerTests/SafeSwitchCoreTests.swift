@@ -146,6 +146,47 @@ func backupManagerCapturesAndRestoresLatestRestorePoint() throws {
     }
 
 @Test
+func backupManagerRejectsCorruptedRestorePointBeforeMutatingDestination() throws {
+        let harness = try makeHarness()
+        let backupRoot = harness.appSupportURL.appendingPathComponent("SwitchBackups", isDirectory: true)
+        let fileURL = harness.codexHomeURL.appendingPathComponent("auth.json", isDirectory: false)
+
+        try FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("before".utf8).write(to: fileURL, options: .atomic)
+
+        let manager = BackupManager(backupsRootURL: backupRoot)
+        let manifest = try manager.createRestorePoint(
+            reason: "test backup",
+            summary: "capture auth",
+            files: [fileURL],
+            codexWasRunning: true
+        )
+
+        try Data("after".utf8).write(to: fileURL, options: .atomic)
+        let payloadRelativePath = try #require(manifest.files.first?.backupRelativePath)
+        let payloadURL = backupRoot
+            .appendingPathComponent(manifest.id, isDirectory: true)
+            .appendingPathComponent(payloadRelativePath, isDirectory: false)
+        try Data("corrupted".utf8).write(to: payloadURL, options: .atomic)
+
+        do {
+            _ = try manager.restoreLatestRestorePoint()
+            Issue.record("Expected corrupted restore point to throw.")
+        } catch let error as BackupManagerError {
+            switch error {
+            case .restorePointCorrupted(let path):
+                #expect(URL(fileURLWithPath: path).standardizedFileURL.path == payloadURL.standardizedFileURL.path)
+            default:
+                Issue.record("Unexpected backup manager error: \(error)")
+            }
+        }
+        #expect(try Data(contentsOf: fileURL).utf8String() == "after")
+    }
+
+@Test
 func rolloutProviderSynchronizerRewritesSessionMetaAcrossRoots() throws {
         let harness = try makeHarness()
         let activeURL = try writeRollout(
@@ -232,6 +273,112 @@ func switchOrchestratorAppliesRuntimeSynchronizesRolloutsAndRequestsRepair() asy
         #expect(mergedConfig.contains("personality = \"pragmatic\""))
         #expect(mergedConfig.contains("model_provider = \"openai\""))
         #expect(result.restorePoint.files.contains { $0.originalPath.hasSuffix("/auth.json") })
+    }
+
+@MainActor
+@Test
+func switchOrchestratorAutomaticallyRollsBackWhenRepairFailsAfterFilesChange() async throws {
+        let harness = try makeHarness()
+        try seedCurrentRuntime(in: harness, provider: "legacy")
+        let rolloutURL = try writeRollout(
+            under: harness.codexHomeURL.appendingPathComponent("sessions", isDirectory: true),
+            id: "switch-rollback",
+            provider: "legacy"
+        )
+
+        let repairer = RepairerSpy(error: NSError(domain: "SafeSwitchCoreTests", code: 99))
+        let desktop = DesktopControllerSpy(isRunning: true)
+        let orchestrator = makeOrchestrator(
+            harness: harness,
+            repairer: repairer,
+            desktop: desktop
+        )
+
+        let target = ProviderProfile(
+            id: "target-openai",
+            displayName: "Target OpenAI",
+            source: .vault,
+            runtimeMaterial: ProfileRuntimeMaterial(
+                authData: Data("{\"auth_mode\":\"chatgpt\",\"account_id\":\"next\"}".utf8),
+                configData: Data("model_provider = \"openai\"\nmodel = \"gpt-5.4\"\n".utf8)
+            ),
+            authMode: .chatgpt,
+            providerID: "openai",
+            providerDisplayName: "OpenAI",
+            baseURLHost: nil,
+            model: "gpt-5.4",
+            snapshot: nil,
+            healthStatus: .healthy,
+            errorMessage: nil,
+            isCurrent: false
+        )
+
+        await #expect(throws: NSError.self) {
+            _ = try await orchestrator.perform(targetProfile: target)
+        }
+
+        #expect(try Data(contentsOf: harness.codexHomeURL.appendingPathComponent("auth.json")).utf8String()
+            == "{\"auth_mode\":\"chatgpt\",\"last_refresh\":\"2026-03-31T00:00:00Z\"}")
+        #expect(try readSessionMetaProvider(from: rolloutURL) == "legacy")
+        #expect(desktop.reopenInvocationCount == 1)
+    }
+
+@MainActor
+@Test
+func switchOrchestratorRecomputesRolloutPreviewAfterClosingCodex() async throws {
+        let harness = try makeHarness()
+        try seedCurrentRuntime(in: harness, provider: "legacy")
+        let originalRolloutURL = try writeRollout(
+            under: harness.codexHomeURL.appendingPathComponent("sessions", isDirectory: true),
+            id: "switch-original",
+            provider: "legacy"
+        )
+        let lateRolloutURL = harness.codexHomeURL
+            .appendingPathComponent("sessions", isDirectory: true)
+            .appendingPathComponent("2026", isDirectory: true)
+            .appendingPathComponent("03", isDirectory: true)
+            .appendingPathComponent("31", isDirectory: true)
+            .appendingPathComponent("rollout-switch-late.jsonl", isDirectory: false)
+
+        let repairer = RepairerSpy()
+        let desktop = DesktopControllerSpy(isRunning: true) {
+            _ = try writeRollout(
+                under: harness.codexHomeURL.appendingPathComponent("sessions", isDirectory: true),
+                id: "switch-late",
+                provider: "legacy"
+            )
+        }
+        let orchestrator = makeOrchestrator(
+            harness: harness,
+            repairer: repairer,
+            desktop: desktop
+        )
+
+        let target = ProviderProfile(
+            id: "target-openai",
+            displayName: "Target OpenAI",
+            source: .vault,
+            runtimeMaterial: ProfileRuntimeMaterial(
+                authData: Data("{\"auth_mode\":\"chatgpt\"}".utf8),
+                configData: Data("model_provider = \"openai\"\nmodel = \"gpt-5.4\"\n".utf8)
+            ),
+            authMode: .chatgpt,
+            providerID: "openai",
+            providerDisplayName: "OpenAI",
+            baseURLHost: nil,
+            model: "gpt-5.4",
+            snapshot: nil,
+            healthStatus: .healthy,
+            errorMessage: nil,
+            isCurrent: false
+        )
+
+        let result = try await orchestrator.perform(targetProfile: target)
+
+        #expect(result.updatedRolloutCount == 2)
+        #expect(try readSessionMetaProvider(from: originalRolloutURL) == "openai")
+        #expect(try readSessionMetaProvider(from: lateRolloutURL) == "openai")
+        #expect(result.restorePoint.files.contains { $0.originalPath == lateRolloutURL.path })
     }
 
 @MainActor
@@ -409,9 +556,17 @@ private func readSessionMetaProvider(from fileURL: URL) throws -> String {
 
 private final class RepairerSpy: OfficialThreadRepairing {
     private(set) var invocationCount = 0
+    private let error: Error?
+
+    init(error: Error? = nil) {
+        self.error = error
+    }
 
     func rescanAndRepair() async throws -> OfficialRepairSummary {
         invocationCount += 1
+        if let error {
+            throw error
+        }
         return OfficialRepairSummary(
             createdThreads: 0,
             updatedThreads: 1,
@@ -427,9 +582,14 @@ private final class DesktopControllerSpy: CodexDesktopControlling {
     private(set) var closeInvocationCount = 0
     private(set) var reopenInvocationCount = 0
     var isRunning: Bool
+    private let onClose: (() throws -> Void)?
 
-    init(isRunning: Bool) {
+    init(
+        isRunning: Bool,
+        onClose: (() throws -> Void)? = nil
+    ) {
         self.isRunning = isRunning
+        self.onClose = onClose
     }
 
     func closeIfRunning() async throws -> Bool {
@@ -437,6 +597,7 @@ private final class DesktopControllerSpy: CodexDesktopControlling {
         if wasRunning {
             closeInvocationCount += 1
             isRunning = false
+            try onClose?()
         }
         return wasRunning
     }

@@ -14,6 +14,22 @@ struct SettingsPresenterCallbacks {
 }
 
 @MainActor
+protocol SettingsWindowPresenting: AnyObject {
+    var isVisible: Bool { get }
+
+    func update(
+        settings: AppSettings,
+        accountPanelState: SettingsAccountPanelState
+    )
+
+    func show(
+        settings: AppSettings,
+        accountPanelState: SettingsAccountPanelState,
+        callbacks: SettingsPresenterCallbacks
+    )
+}
+
+@MainActor
 final class SettingsPresenter {
     private var controller: SettingsWindowController?
 
@@ -33,6 +49,8 @@ final class SettingsPresenter {
         accountPanelState: SettingsAccountPanelState,
         callbacks: SettingsPresenterCallbacks
     ) {
+        let needsInitialController = controller == nil
+
         if controller == nil {
             let nextController = SettingsWindowController(
                 settings: settings,
@@ -49,9 +67,13 @@ final class SettingsPresenter {
             controller = nextController
         }
 
-        controller?.update(settings: settings, accountPanelState: accountPanelState)
+        if !needsInitialController {
+            controller?.update(settings: settings, accountPanelState: accountPanelState)
+        }
         controller?.showWindow(nil)
         controller?.window?.makeKeyAndOrderFront(nil)
         controller?.window?.orderFrontRegardless()
     }
 }
+
+extension SettingsPresenter: SettingsWindowPresenting {}

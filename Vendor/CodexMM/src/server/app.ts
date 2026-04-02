@@ -11,6 +11,7 @@ import type {
 } from "../shared/contracts";
 import { AppError } from "./lib/errors";
 import { createSessionManager } from "./services/session-manager";
+import { uniqueSessionIds } from "./services/session-manager-helpers";
 
 type AppConfig = {
   codexHome: string;
@@ -171,6 +172,7 @@ export function createApp(config: AppConfig) {
       const payload: ApiErrorResponse = {
         code: error.code,
         error: error.message,
+        details: error.details,
       };
       response.status(error.statusCode).json(payload);
       return;
@@ -180,6 +182,7 @@ export function createApp(config: AppConfig) {
       response.status(500).json({
         code: "internal_server_error",
         error: error.message,
+        details: undefined,
       } satisfies ApiErrorResponse);
       return;
     }
@@ -187,6 +190,7 @@ export function createApp(config: AppConfig) {
     response.status(500).json({
       code: "unknown_server_error",
       error: "Unknown server error",
+      details: undefined,
     } satisfies ApiErrorResponse);
   });
 
@@ -243,9 +247,7 @@ function toOptionalNumber(value: unknown) {
 
 function readBatchRequest(body: unknown): BatchSessionActionRequest {
   const sessionIds = Array.isArray((body as BatchSessionActionRequest | undefined)?.sessionIds)
-    ? ((body as BatchSessionActionRequest).sessionIds.filter(
-        (value): value is string => typeof value === "string" && value.length > 0,
-      ) as string[])
+    ? uniqueSessionIds((body as BatchSessionActionRequest).sessionIds)
     : [];
 
   return { sessionIds };

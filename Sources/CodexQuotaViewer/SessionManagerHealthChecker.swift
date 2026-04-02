@@ -21,12 +21,11 @@ struct SessionManagerHealthChecker {
                 return false
             }
 
-            if let payload = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let ok = payload["ok"] as? Bool {
-                return ok
+            guard let payload = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return false
             }
 
-            return true
+            return (payload["ok"] as? Bool) == true
         } catch {
             return false
         }

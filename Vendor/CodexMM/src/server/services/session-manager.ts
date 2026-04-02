@@ -12,6 +12,7 @@ import {
 import path from "node:path";
 
 import type {
+  AuditEntry,
   BatchSessionActionResponse,
   RestoreRequest,
   OfficialRepairResponse,
@@ -24,6 +25,7 @@ import { AppError } from "../lib/errors";
 import {
   buildSessionRoots,
   ensureInsidePath,
+  ensureInsideRealpath,
   sessionArchivePath,
   sessionSnapshotPath,
 } from "../lib/paths";
@@ -35,11 +37,13 @@ import {
   copyIfMissing,
   looksCanonicalSessionRelativePath,
   resolveSessionRelativePath,
+  uniqueSessionIds,
 } from "./session-manager-helpers";
 import { CodexOfficialThreadBridge } from "./codex-official-thread-bridge";
 import {
   DEFAULT_TIMELINE_PAGE_SIZE,
   MAX_TIMELINE_PAGE_SIZE,
+  parseSessionCatalog,
 } from "./jsonl-session-parser";
 import { SessionRepository } from "./session-repository";
 import type { CatalogSessionEntry } from "./session-repository-model";
@@ -71,12 +75,39 @@ export function createSessionManager(config: ManagerConfig) {
 
   async function repairOfficialThreads(sessionIds?: string[]): Promise<OfficialRepairResponse> {
     return enqueueMutation(async () => {
-      const targetIds = sessionIds && sessionIds.length > 0 ? sessionIds : undefined;
-      const sessions = await scanAndIndexSessions();
-      const stats = await officialThreads.repairSessions(sessions, {
-        sessionIds: targetIds,
-        cleanupBroken: !targetIds,
-      });
+      const targetIds = normalizeSessionIds(sessionIds);
+
+      if (!targetIds) {
+        const sessions = await scanAndIndexSessions();
+        const stats = await officialThreads.repairSessions(sessions, {
+          cleanupBroken: true,
+        });
+
+        return {
+          sessions: repository.listSessions(),
+          stats,
+        };
+      }
+
+      const refreshed = await refreshIndexedSessions(targetIds);
+      const stats =
+        refreshed.records.length > 0
+          ? await officialThreads.repairSessions(refreshed.records, {
+              sessionIds: targetIds,
+            })
+          : createEmptyRepairStats();
+
+      for (const removedId of refreshed.removedIds) {
+        const removed = await officialThreads.removeSession(removedId);
+
+        if (removed.removedThread) {
+          stats.removedBrokenThreads += 1;
+        }
+
+        if (removed.removedIndex) {
+          stats.updatedSessionIndexEntries += 1;
+        }
+      }
 
       return {
         sessions: repository.listSessions(),
@@ -105,26 +136,13 @@ export function createSessionManager(config: ManagerConfig) {
     }
 
     for (const entry of archivedEntries) {
-      const summary = entry.parsed.summary;
-      const currentRelativePath = path.relative(roots.archiveRoot, entry.filePath);
-      const originalRelativePath = looksCanonicalSessionRelativePath(
-        currentRelativePath,
-        summary.id,
-      )
-        ? currentRelativePath
-        : buildFallbackRelativePath(summary.startedAt, summary.id);
-      const archivePath = sessionArchivePath(roots.archiveRoot, originalRelativePath);
+      const { entry: normalizedEntry, originalRelativePath } = await canonicalizeArchivedEntry(
+        entry,
+        buildFallbackRelativePath(entry.parsed.summary.startedAt, entry.parsed.summary.id),
+      );
 
-      if (entry.filePath !== archivePath) {
-        await mkdir(path.dirname(archivePath), { recursive: true });
-        await rename(entry.filePath, archivePath);
-      }
-
-      archivedById.set(summary.id, {
-        ...entry,
-        filePath: archivePath,
-      });
-      archivedRelativePaths.set(summary.id, originalRelativePath);
+      archivedById.set(normalizedEntry.parsed.summary.id, normalizedEntry);
+      archivedRelativePaths.set(normalizedEntry.parsed.summary.id, originalRelativePath);
     }
 
     for (const entry of snapshotEntries) {
@@ -175,11 +193,225 @@ export function createSessionManager(config: ManagerConfig) {
     return repository.replaceCatalog(catalogEntries);
   }
 
+  async function refreshIndexedSessions(sessionIds: string[]) {
+    await ensureRoots();
+    const latestAuditBySessionId = new Map(
+      repository.listLatestAuditEntries().map((entry) => [entry.sessionId, entry]),
+    );
+    const records: SessionRecord[] = [];
+    const removedIds: string[] = [];
+
+    for (const sessionId of sessionIds) {
+      const existing = repository.getSession(sessionId);
+
+      if (!existing) {
+        continue;
+      }
+
+      const catalogEntry = await readCatalogEntryForSession(
+        existing,
+        latestAuditBySessionId.get(sessionId),
+      );
+
+      if (!catalogEntry) {
+        repository.deleteSession(sessionId);
+        removedIds.push(sessionId);
+        continue;
+      }
+
+      records.push(repository.saveCatalogEntry(catalogEntry));
+    }
+
+    return {
+      records,
+      removedIds,
+    };
+  }
+
+  async function readCatalogEntryForSession(
+    existing: SessionRecord,
+    latestAudit?: AuditEntry,
+  ): Promise<CatalogSessionEntry | null> {
+    const fallbackRelativePath =
+      existing.originalRelativePath ??
+      readRelativePathFromAudit(latestAudit?.sourcePath, roots) ??
+      readRelativePathFromAudit(latestAudit?.targetPath, roots) ??
+      buildFallbackRelativePath(existing.startedAt, existing.id);
+    const activeEntry = await readCatalogSourceEntry(existing.id, roots.sessionsRoot, [
+      existing.activePath,
+      path.join(roots.sessionsRoot, fallbackRelativePath),
+      latestAudit?.sourcePath,
+      latestAudit?.targetPath,
+    ]);
+    const archived = await readArchivedCatalogSourceEntry(
+      existing.id,
+      fallbackRelativePath,
+      [
+        existing.archivePath,
+        sessionArchivePath(roots.archiveRoot, fallbackRelativePath),
+        latestAudit?.sourcePath,
+        latestAudit?.targetPath,
+      ],
+    );
+    const snapshotEntry = await readCatalogSourceEntry(existing.id, roots.snapshotRoot, [
+      existing.snapshotPath,
+      sessionSnapshotPath(roots.snapshotRoot, existing.id),
+    ]);
+    const primaryEntry = activeEntry ?? archived.entry ?? snapshotEntry;
+
+    if (!primaryEntry) {
+      return null;
+    }
+
+    return {
+      summary: primaryEntry.parsed.summary,
+      timeline: primaryEntry.parsed.timeline,
+      activePath: activeEntry?.filePath ?? null,
+      archivePath: archived.entry?.filePath ?? null,
+      snapshotPath: snapshotEntry?.filePath ?? null,
+      originalRelativePath:
+        activeEntry
+          ? path.relative(roots.sessionsRoot, activeEntry.filePath)
+          : archived.originalRelativePath ??
+            readRelativePathFromAudit(latestAudit?.sourcePath, roots) ??
+            readRelativePathFromAudit(latestAudit?.targetPath, roots) ??
+            buildFallbackRelativePath(
+              primaryEntry.parsed.summary.startedAt,
+              primaryEntry.parsed.summary.id,
+            ),
+      status: resolveCatalogStatus(
+        activeEntry?.filePath ?? null,
+        archived.entry?.filePath ?? null,
+        latestAudit?.action,
+      ),
+    };
+  }
+
+  async function readCatalogSourceEntry(
+    sessionId: string,
+    root: string,
+    candidates: Array<string | null | undefined>,
+  ): Promise<SessionSourceEntry | null> {
+    for (const candidate of uniquePaths(candidates)) {
+      const filePath = await resolveManagedExistingPath(root, candidate);
+
+      if (!filePath) {
+        continue;
+      }
+
+      try {
+        const parsed = await parseSessionCatalog(filePath);
+
+        if (!parsed || parsed.summary.id !== sessionId) {
+          continue;
+        }
+
+        return {
+          filePath,
+          parsed,
+        };
+      } catch {
+        continue;
+      }
+    }
+
+    return null;
+  }
+
+  async function readArchivedCatalogSourceEntry(
+    sessionId: string,
+    fallbackRelativePath: string,
+    candidates: Array<string | null | undefined>,
+  ): Promise<{
+    entry: SessionSourceEntry | null;
+    originalRelativePath: string | null;
+  }> {
+    for (const candidate of uniquePaths(candidates)) {
+      const filePath = await resolveManagedExistingPath(roots.archiveRoot, candidate);
+
+      if (!filePath) {
+        continue;
+      }
+
+      try {
+        const parsed = await parseSessionCatalog(filePath);
+
+        if (!parsed || parsed.summary.id !== sessionId) {
+          continue;
+        }
+        const normalized = await canonicalizeArchivedEntry(
+          { filePath, parsed },
+          fallbackRelativePath,
+        );
+
+        return {
+          entry: normalized.entry,
+          originalRelativePath: normalized.originalRelativePath,
+        };
+      } catch {
+        continue;
+      }
+    }
+
+    return {
+      entry: null,
+      originalRelativePath: null,
+    };
+  }
+
+  async function canonicalizeArchivedEntry(
+    entry: SessionSourceEntry,
+    fallbackRelativePath: string,
+  ): Promise<{
+    entry: SessionSourceEntry;
+    originalRelativePath: string;
+  }> {
+    const currentRelativePath = path.relative(roots.archiveRoot, entry.filePath);
+    const originalRelativePath = looksCanonicalSessionRelativePath(
+      currentRelativePath,
+      entry.parsed.summary.id,
+    )
+      ? currentRelativePath
+      : fallbackRelativePath;
+    const archivePath = await ensureInsideRealpath(
+      roots.archiveRoot,
+      sessionArchivePath(roots.archiveRoot, originalRelativePath),
+      { allowMissingTail: true },
+    );
+
+    if (entry.filePath !== archivePath) {
+      await mkdir(path.dirname(archivePath), { recursive: true });
+      await rename(entry.filePath, archivePath);
+    }
+
+    return {
+      entry: {
+        ...entry,
+        filePath: archivePath,
+      },
+      originalRelativePath,
+    };
+  }
+
+  async function resolveManagedExistingPath(root: string, candidate: string | null | undefined) {
+    if (!candidate) {
+      return null;
+    }
+
+    try {
+      await ensureInsideRealpath(root, candidate);
+      return path.resolve(candidate);
+    } catch {
+      return null;
+    }
+  }
+
   async function listSessions(filters: SessionFilters = {}) {
     return repository.listSessions(filters);
   }
 
   async function getSessionDetail(id: string): Promise<SessionDetail> {
+    requireSession(id);
     const detail = repository.listDetails(id);
     const timelinePage = repository.listTimelinePage(id, {
       offset: 0,
@@ -229,10 +461,12 @@ export function createSessionManager(config: ManagerConfig) {
       );
     }
 
-    const sourcePath = ensureInsidePath(roots.sessionsRoot, record.activePath);
-    const targetPath = sessionArchivePath(
+    const sourcePath = await assertManagedPath("active", roots.sessionsRoot, record.activePath);
+    const targetPath = await assertManagedPath(
+      "archive",
       roots.archiveRoot,
-      resolveSessionRelativePath(record),
+      sessionArchivePath(roots.archiveRoot, resolveSessionRelativePath(record)),
+      { allowMissingTail: true },
     );
     await mkdir(path.dirname(targetPath), { recursive: true });
     await rename(sourcePath, targetPath);
@@ -255,14 +489,21 @@ export function createSessionManager(config: ManagerConfig) {
   async function deleteSessionUnsafe(id: string): Promise<SessionRecord> {
     await ensureRoots();
     const record = requireSession(id);
-    const sourcePath = assertManagedCurrentPath(record);
-    const archivePath = ensureInsidePath(
+    const sourcePath = await assertManagedCurrentPath(record);
+    const archivePath = await assertManagedPath(
+      "archive",
       roots.archiveRoot,
       sessionArchivePath(roots.archiveRoot, resolveSessionRelativePath(record)),
+      { allowMissingTail: true },
     );
     const snapshotPath = record.snapshotPath
-      ? assertManagedPath("snapshot", roots.snapshotRoot, record.snapshotPath)
-      : ensureInsidePath(roots.snapshotRoot, sessionSnapshotPath(roots.snapshotRoot, id));
+      ? await assertManagedPath("snapshot", roots.snapshotRoot, record.snapshotPath)
+      : await assertManagedPath(
+          "snapshot",
+          roots.snapshotRoot,
+          sessionSnapshotPath(roots.snapshotRoot, id),
+          { allowMissingTail: true },
+        );
 
     await mkdir(path.dirname(snapshotPath), { recursive: true });
     await copyIfMissing(sourcePath, snapshotPath);
@@ -296,17 +537,19 @@ export function createSessionManager(config: ManagerConfig) {
     const restoreMode = normalizeRestoreMode(request.restoreMode);
     const isAlreadyActive = Boolean(record.activePath);
     const sourcePath = isAlreadyActive
-      ? assertManagedPath("active", roots.sessionsRoot, record.activePath!)
-      : assertManagedRestoreSource(record);
+      ? await assertManagedPath("active", roots.sessionsRoot, record.activePath!)
+      : await assertManagedRestoreSource(record);
     const restorePath = isAlreadyActive
-      ? assertManagedPath("active", roots.sessionsRoot, record.activePath!)
-      : ensureInsidePath(
+      ? await assertManagedPath("active", roots.sessionsRoot, record.activePath!)
+      : await assertManagedPath(
+          "active",
           roots.sessionsRoot,
           path.join(
             roots.sessionsRoot,
             record.originalRelativePath ??
               buildFallbackRelativePath(record.startedAt, record.id),
           ),
+          { allowMissingTail: true },
         );
 
     if (request.targetCwd) {
@@ -321,10 +564,6 @@ export function createSessionManager(config: ManagerConfig) {
       );
     }
 
-    if (restoreMode === "rebind_cwd") {
-      await rewriteSessionMetaCwd(sourcePath, request.targetCwd!);
-    }
-
     if (!isAlreadyActive) {
       await mkdir(path.dirname(restorePath), { recursive: true });
 
@@ -335,6 +574,10 @@ export function createSessionManager(config: ManagerConfig) {
           await copyFile(sourcePath, restorePath);
         }
       }
+    }
+
+    if (restoreMode === "rebind_cwd") {
+      await rewriteSessionMetaCwd(restorePath, request.targetCwd!);
     }
 
     const next = isAlreadyActive
@@ -387,13 +630,13 @@ export function createSessionManager(config: ManagerConfig) {
     }
 
     if (record.archivePath) {
-      await rm(assertManagedPath("archive", roots.archiveRoot, record.archivePath), {
+      await rm(await assertManagedPath("archive", roots.archiveRoot, record.archivePath), {
         force: true,
       });
     }
 
     if (record.snapshotPath) {
-      await rm(assertManagedPath("snapshot", roots.snapshotRoot, record.snapshotPath), {
+      await rm(await assertManagedPath("snapshot", roots.snapshotRoot, record.snapshotPath), {
         force: true,
       });
     }
@@ -436,7 +679,7 @@ export function createSessionManager(config: ManagerConfig) {
     sessionIds: string[],
   ): Promise<BatchSessionActionResponse> {
     return enqueueMutation(async () => {
-      const uniqueIds = [...new Set(sessionIds.filter(Boolean))];
+      const uniqueIds = uniqueSessionIds(sessionIds);
       const failures: BatchSessionActionResponse["failures"] = [];
 
       for (const sessionId of uniqueIds) {
@@ -486,7 +729,9 @@ export function createSessionManager(config: ManagerConfig) {
   function requireSession(id: string) {
     const record = repository.getSession(id);
     if (!record) {
-      throw new AppError(404, "unknown_session", `Unknown session: ${id}`);
+      throw new AppError(404, "unknown_session", `Unknown session: ${id}`, {
+        sessionId: id,
+      });
     }
 
     return record;
@@ -496,7 +741,7 @@ export function createSessionManager(config: ManagerConfig) {
     sessionIds: string[],
     action: (sessionId: string) => Promise<SessionRecord>,
   ): Promise<BatchSessionActionResponse> {
-    const uniqueIds = [...new Set(sessionIds.filter(Boolean))];
+    const uniqueIds = uniqueSessionIds(sessionIds);
     const records: SessionRecord[] = [];
     const failures: BatchSessionActionResponse["failures"] = [];
 
@@ -565,7 +810,7 @@ export function createSessionManager(config: ManagerConfig) {
     }
   }
 
-  function assertManagedCurrentPath(record: SessionRecord) {
+  async function assertManagedCurrentPath(record: SessionRecord) {
     if (record.activePath) {
       return assertManagedPath("active", roots.sessionsRoot, record.activePath);
     }
@@ -581,7 +826,7 @@ export function createSessionManager(config: ManagerConfig) {
     );
   }
 
-  function assertManagedRestoreSource(record: SessionRecord) {
+  async function assertManagedRestoreSource(record: SessionRecord) {
     if (record.archivePath) {
       return assertManagedPath("archive", roots.archiveRoot, record.archivePath);
     }
@@ -597,18 +842,41 @@ export function createSessionManager(config: ManagerConfig) {
     );
   }
 
-  function assertManagedPath(
+  async function assertManagedPath(
     label: "active" | "archive" | "snapshot",
     root: string,
     candidate: string,
+    options: {
+      allowMissingTail?: boolean;
+    } = {},
   ) {
     try {
-      return ensureInsidePath(root, candidate);
-    } catch {
+      return await ensureInsideRealpath(root, candidate, options);
+    } catch (error) {
+      const pathDetails =
+        error instanceof AppError &&
+        error.details &&
+        "managedRoot" in error.details &&
+        typeof error.details.managedRoot === "string" &&
+        "candidatePath" in error.details &&
+        typeof error.details.candidatePath === "string" &&
+        "resolvedCandidatePath" in error.details &&
+        typeof error.details.resolvedCandidatePath === "string"
+          ? {
+              managedRoot: error.details.managedRoot,
+              candidatePath: error.details.candidatePath,
+              resolvedCandidatePath: error.details.resolvedCandidatePath,
+            }
+          : null;
+
       throw new AppError(
         400,
         "managed_session_path_outside",
         `会话 ${label} 文件路径超出了受管目录，已拒绝继续操作。`,
+        {
+          label,
+          ...(pathDetails ?? {}),
+        },
       );
     }
   }
@@ -630,6 +898,29 @@ function resolveCatalogStatus(
   }
 
   return "restorable" as const;
+}
+
+function normalizeSessionIds(sessionIds?: string[]) {
+  if (!sessionIds || sessionIds.length === 0) {
+    return undefined;
+  }
+
+  const uniqueIds = uniqueSessionIds(sessionIds);
+  return uniqueIds.length > 0 ? uniqueIds : undefined;
+}
+
+function uniquePaths(candidates: Array<string | null | undefined>) {
+  return [...new Set(candidates.filter((candidate): candidate is string => Boolean(candidate)))];
+}
+
+function createEmptyRepairStats() {
+  return {
+    createdThreads: 0,
+    updatedThreads: 0,
+    updatedSessionIndexEntries: 0,
+    removedBrokenThreads: 0,
+    hiddenSnapshotOnlySessions: 0,
+  };
 }
 
 function readRelativePathFromAudit(
@@ -696,6 +987,7 @@ function mapBatchFailure(sessionId: string, error: unknown) {
       sessionId,
       code: error.code,
       error: error.message,
+      details: error.details,
     };
   }
 

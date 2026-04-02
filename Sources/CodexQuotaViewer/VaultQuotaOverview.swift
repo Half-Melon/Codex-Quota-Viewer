@@ -69,6 +69,14 @@ struct QuotaOverviewState: Equatable {
     let apiCount: Int
     let boardTiles: [QuotaTileViewModel]
     let sections: [AllAccountsSectionModel]
+
+    var hasProfiles: Bool {
+        sections.contains { !$0.profiles.isEmpty }
+    }
+
+    var isAPIOnly: Bool {
+        chatGPTCount == 0 && apiCount > 0
+    }
 }
 
 private enum QuotaProfilePriority: Int, Comparable {
@@ -201,22 +209,14 @@ func allAccountsMenuText(
     now: Date = Date()
 ) -> String {
     if profile.authMode == .apiKey {
-        let parts = [
+        return joinedNonEmptyParts([
             profile.displayName,
             profile.providerLabel == "default"
                 ? AppLocalization.localized(en: "API Key", zh: "API 密钥")
                 : profile.providerLabel,
             profile.baseURLHost,
             profile.model,
-        ]
-        .compactMap { value -> String? in
-            guard let value,
-                  !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                return nil
-            }
-            return value
-        }
-        return parts.joined(separator: " · ")
+        ])
     }
 
     let state = quotaTileState(for: profile, refreshIntervalPreset: refreshIntervalPreset, now: now)
@@ -234,7 +234,7 @@ func allAccountsMenuText(
         trailing = quotaResetScheduleText(for: profile)
     case .healthy:
         let summaries = quotaDisplayWindows(for: profile).map(compactQuotaWindowText)
-        trailing = summaries.isEmpty ? AppLocalization.quotaUnavailableLabel() : summaries.joined(separator: " · ")
+        trailing = summaries.isEmpty ? AppLocalization.quotaUnavailableLabel() : joinedNonEmptyParts(summaries.map { Optional($0) })
     }
 
     return "\(profile.displayName) · \(trailing)"
@@ -244,6 +244,7 @@ func allAccountsMenuText(
 final class VaultQuotaRefreshCoordinator {
     typealias SnapshotFetcher = (ProfileRuntimeMaterial) async throws -> CodexSnapshot
     typealias UpdateHandler = @MainActor ([VaultQuotaSnapshotRecord]) -> Void
+    typealias CompletionHandler = @MainActor ([VaultQuotaSnapshotRecord]) -> Void
 
     struct Request {
         let currentProfile: ProviderProfile?
@@ -253,8 +254,11 @@ final class VaultQuotaRefreshCoordinator {
 
     private let snapshotFetcher: SnapshotFetcher
     private var activeTask: Task<Void, Never>?
+    private var activeRequest: Request?
     private var pendingRequest: Request?
     private var pendingHandler: UpdateHandler?
+    private var pendingCompletionHandler: CompletionHandler?
+    private var pendingPresentationRefresh = DeferredPresentationRefreshState()
 
     init(snapshotFetcher: @escaping SnapshotFetcher) {
         self.snapshotFetcher = snapshotFetcher
@@ -266,23 +270,35 @@ final class VaultQuotaRefreshCoordinator {
 
     func requestRefresh(
         _ request: Request,
-        onUpdate: @escaping UpdateHandler
+        onUpdate: @escaping UpdateHandler,
+        onComplete: CompletionHandler? = nil
     ) {
-        if activeTask != nil {
+        if let activeRequest {
+            if requestScopeKey(activeRequest) == requestScopeKey(request) {
+                pendingPresentationRefresh.requestRefresh()
+                pendingHandler = onUpdate
+                pendingCompletionHandler = onComplete
+                return
+            }
+
             pendingRequest = request
             pendingHandler = onUpdate
+            pendingCompletionHandler = onComplete
+            pendingPresentationRefresh = DeferredPresentationRefreshState()
             return
         }
 
+        activeRequest = request
         activeTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.run(request, onUpdate: onUpdate)
+            await self.run(request, onUpdate: onUpdate, onComplete: onComplete)
         }
     }
 
     private func run(
         _ request: Request,
-        onUpdate: @escaping UpdateHandler
+        onUpdate: @escaping UpdateHandler,
+        onComplete: CompletionHandler?
     ) async {
         let activeAccountIDs = Set(request.vaultAccounts.map(\.id))
         var recordsByID = Dictionary(
@@ -357,14 +373,45 @@ final class VaultQuotaRefreshCoordinator {
             onUpdate(sortedQuotaRecords(recordsByID.values))
         }
 
+        let finalRecords = sortedQuotaRecords(recordsByID.values)
+        let hasPresentationOnlyFollowUp = pendingPresentationRefresh.takePendingRefresh()
         activeTask = nil
+        activeRequest = nil
 
         if let pendingRequest {
+            onComplete?(finalRecords)
             let nextHandler = pendingHandler ?? onUpdate
+            let nextCompletionHandler = pendingCompletionHandler ?? onComplete
             self.pendingRequest = nil
             self.pendingHandler = nil
-            requestRefresh(pendingRequest, onUpdate: nextHandler)
+            self.pendingCompletionHandler = nil
+            requestRefresh(
+                pendingRequest,
+                onUpdate: nextHandler,
+                onComplete: nextCompletionHandler
+            )
+            return
         }
+
+        if hasPresentationOnlyFollowUp {
+            let nextHandler = pendingHandler ?? onUpdate
+            let nextCompletionHandler = pendingCompletionHandler ?? onComplete
+            pendingHandler = nil
+            pendingCompletionHandler = nil
+            nextHandler(finalRecords)
+            nextCompletionHandler?(finalRecords)
+            return
+        }
+
+        onComplete?(finalRecords)
+        pendingHandler = nil
+        pendingCompletionHandler = nil
+    }
+
+    private func requestScopeKey(_ request: Request) -> String {
+        let currentID = request.currentProfile?.id ?? ""
+        let accountIDs = request.vaultAccounts.map(\.id).sorted().joined(separator: "|")
+        return "\(currentID)::\(accountIDs)"
     }
 }
 
@@ -573,15 +620,14 @@ private func quotaResetScheduleText(for profile: ProviderProfile) -> String {
         return AppLocalization.quotaUnavailableLabel()
     }
 
-    return windows
-        .map { quotaWindow in
-            quotaResetText(
-                window: quotaWindow.window,
-                label: quotaWindow.label,
-                style: quotaResetDateStyle(for: quotaWindow.window)
-            )
-        }
-        .joined(separator: " · ")
+    let texts = windows.map { quotaWindow in
+        quotaResetText(
+            window: quotaWindow.window,
+            label: quotaWindow.label,
+            style: quotaResetDateStyle(for: quotaWindow.window)
+        )
+    }
+    return joinedNonEmptyParts(texts.map(Optional.some))
 }
 
 private enum QuotaResetDateStyle {

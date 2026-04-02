@@ -80,3 +80,105 @@ func visibleMenuNoticePrefersOperationNoticeButFallsBackToTimedSuccessToast() {
         )?.message == "Switched."
     )
 }
+
+@Test
+func nextMenuNoticeExpiryTracksNearestVisibleNoticeAcrossSources() {
+    let now = Date(timeIntervalSince1970: 1_800_000_200)
+    let safeSwitchNotice = MenuNoticeEntry.timed(
+        MenuNotice(kind: .info, message: "Switching…"),
+        now: now,
+        duration: 8
+    )
+    let sessionManagerNotice = MenuNoticeEntry.timed(
+        MenuNotice(kind: .info, message: "Opening…"),
+        now: now,
+        duration: 3
+    )
+
+    #expect(
+        nextMenuNoticeExpiry(
+            safeSwitchNotice: safeSwitchNotice,
+            isForegroundOperationActive: false,
+            sessionManagerNotice: sessionManagerNotice,
+            isLaunchingSessionManager: false,
+            now: now
+        ) == now.addingTimeInterval(3)
+    )
+    #expect(
+        nextMenuNoticeExpiry(
+            safeSwitchNotice: safeSwitchNotice,
+            isForegroundOperationActive: false,
+            sessionManagerNotice: sessionManagerNotice,
+            isLaunchingSessionManager: false,
+            now: now.addingTimeInterval(4)
+        ) == now.addingTimeInterval(8)
+    )
+}
+
+@Test
+func deferredPresentationRefreshStateCoalescesRepeatedSignals() {
+    var state = DeferredPresentationRefreshState()
+
+    #expect(state.takePendingRefresh() == false)
+
+    state.requestRefresh()
+    state.requestRefresh()
+
+    #expect(state.takePendingRefresh() == true)
+    #expect(state.takePendingRefresh() == false)
+}
+
+@MainActor
+@Test
+func transientMenuNoticeControllerExpiresTimedNoticeAndInvokesCallback() {
+    let now = Date(timeIntervalSince1970: 1_800_000_300)
+    var scheduledDelay: TimeInterval?
+    var scheduledAction: (@MainActor () -> Void)?
+    var expiryCallbackCount = 0
+    let controller = TransientMenuNoticeController(
+        scheduler: { delay, action in
+            scheduledDelay = delay
+            scheduledAction = action
+            return DispatchWorkItem {}
+        },
+        onNoticeExpired: {
+            expiryCallbackCount += 1
+        }
+    )
+
+    controller.presentSessionManagerNotice(
+        MenuNotice(kind: .info, message: "Opening…"),
+        lifetime: .timed(3),
+        now: now,
+        isForegroundOperationActive: false,
+        isLaunchingSessionManager: false
+    )
+
+    #expect(
+        controller.visibleNotice(
+            isForegroundOperationActive: false,
+            isLaunchingSessionManager: false,
+            localizationNotice: nil,
+            statusNotice: nil,
+            currentError: nil,
+            loadWarningNotice: nil,
+            now: now
+        )?.message == "Opening…"
+    )
+    #expect(scheduledDelay == 3)
+
+    scheduledAction?()
+
+    #expect(expiryCallbackCount == 1)
+    #expect(
+        controller.visibleNotice(
+            isForegroundOperationActive: false,
+            isLaunchingSessionManager: false,
+            localizationNotice: nil,
+            statusNotice: nil,
+            currentError: nil,
+            loadWarningNotice: nil,
+            now: now.addingTimeInterval(4)
+        ) == nil
+    )
+}

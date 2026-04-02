@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export type CodexSessionIndexEntry = {
@@ -105,7 +105,13 @@ export class CodexSessionIndexRepository {
   }
 
   private async writeEntryMap(entries: Map<string, CodexSessionIndexEntry>) {
-    await mkdir(path.dirname(this.filePath), { recursive: true });
+    const directory = path.dirname(this.filePath);
+    const tempPath = path.join(
+      directory,
+      `session_index.jsonl.tmp-${process.pid}-${Date.now()}`,
+    );
+
+    await mkdir(directory, { recursive: true });
     const content = [...entries.values()]
       .sort(sortEntriesByUpdatedAt)
       .map((entry) =>
@@ -117,7 +123,8 @@ export class CodexSessionIndexRepository {
       )
       .join("\n");
 
-    await writeFile(this.filePath, content ? `${content}\n` : "");
+    await writeFile(tempPath, content ? `${content}\n` : "");
+    await rename(tempPath, this.filePath);
   }
 }
 

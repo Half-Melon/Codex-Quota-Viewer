@@ -1,11 +1,6 @@
 import AppKit
 import Foundation
 
-private enum UsageDateStyle {
-    case time
-    case monthDay
-}
-
 enum MenuNoticeKind: Equatable {
     case info
     case warning
@@ -187,21 +182,25 @@ final class AppController: NSObject, NSMenuDelegate {
     private var safeSwitchCenterState: SafeSwitchCenterState?
     private var statusNotice: MenuNotice?
     private var loadWarningNotice: String?
-    private var sessionManagerNotice: MenuNoticeEntry?
-    private var safeSwitchNotice: MenuNoticeEntry?
     private var localizationNotice: MenuNotice?
     private var refreshState = RefreshRequestState()
     private var isLaunchingSessionManager = false
     private var foregroundOperationState = ForegroundOperationState()
     private var lastRefreshAt: Date?
     private var refreshTimer: Timer?
-    private let settingsPresenter = SettingsPresenter()
+    private let settingsWindowCoordinator = SettingsWindowCoordinator()
     private var menuTrackingGate = MenuTrackingGate()
     private var pendingMenuRefreshReason: String?
     private var deferredMenuPresentations = DeferredMenuPresentationQueue()
-    private var foregroundPresentationDepth = 0
     private var pendingVaultPresentationRefresh: DispatchWorkItem?
-    private var pendingNoticeExpiryRefresh: DispatchWorkItem?
+    private lazy var transientMenuNotices = TransientMenuNoticeController { [weak self] in
+        self?.rebuildMenu(reason: "notice-expired")
+    }
+    private lazy var foregroundPresentationController = ForegroundPresentationController(
+        isPrimaryWindowVisible: { [weak self] in
+            self?.settingsWindowCoordinator.isVisible ?? false
+        }
+    )
 
     func start() {
         menu.autoenablesItems = false
@@ -220,6 +219,7 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
+        refreshTimeSensitivePresentationState(now: Date())
         menuTrackingGate.beginTracking()
         guard shouldAutoRefreshWhenMenuOpens(settings.refreshIntervalPreset) else {
             return
@@ -288,31 +288,13 @@ final class AppController: NSObject, NSMenuDelegate {
 
     private func refreshSettingsUI() {
         installApplicationMainMenu(app: NSApp)
-        settingsPresenter.update(
-            settings: settings,
-            accountPanelState: buildSettingsAccountPanelState(
-                vaultSnapshot: vaultSnapshot,
-                vaultProfiles: vaultProfiles,
-                currentProviderProfile: currentProviderProfile,
-                refreshIntervalPreset: settings.refreshIntervalPreset,
-                actionsEnabled: !isPerformingSafeSwitchOperation
-            )
-        )
+        settingsWindowCoordinator.update(state: currentSettingsWindowPresentationState())
         updateStatusTitle()
         rebuildMenu(reason: "settings-ui")
     }
 
     private func refreshSettingsAccountPanel() {
-        settingsPresenter.update(
-            settings: settings,
-            accountPanelState: buildSettingsAccountPanelState(
-                vaultSnapshot: vaultSnapshot,
-                vaultProfiles: vaultProfiles,
-                currentProviderProfile: currentProviderProfile,
-                refreshIntervalPreset: settings.refreshIntervalPreset,
-                actionsEnabled: !isPerformingSafeSwitchOperation
-            )
-        )
+        settingsWindowCoordinator.update(state: currentSettingsWindowPresentationState())
     }
 
     private func scheduleRefreshTimer() {
@@ -414,10 +396,8 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private func visibleMenuNotice() -> MenuNotice? {
-        CodexQuotaViewer.visibleMenuNotice(
-            safeSwitchNotice: safeSwitchNotice,
+        transientMenuNotices.visibleNotice(
             isForegroundOperationActive: isPerformingSafeSwitchOperation,
-            sessionManagerNotice: sessionManagerNotice,
             isLaunchingSessionManager: isLaunchingSessionManager,
             localizationNotice: localizationNotice,
             statusNotice: statusNotice,
@@ -439,7 +419,13 @@ final class AppController: NSObject, NSMenuDelegate {
         lifetime: MenuNoticeLifetime,
         now: Date = Date()
     ) {
-        safeSwitchNotice = makeMenuNoticeEntry(notice, lifetime: lifetime, now: now)
+        transientMenuNotices.presentSafeSwitchNotice(
+            notice,
+            lifetime: lifetime,
+            now: now,
+            isForegroundOperationActive: isPerformingSafeSwitchOperation,
+            isLaunchingSessionManager: isLaunchingSessionManager
+        )
     }
 
     private func presentSessionManagerNotice(
@@ -447,46 +433,13 @@ final class AppController: NSObject, NSMenuDelegate {
         lifetime: MenuNoticeLifetime,
         now: Date = Date()
     ) {
-        sessionManagerNotice = makeMenuNoticeEntry(notice, lifetime: lifetime, now: now)
-    }
-
-    private func makeMenuNoticeEntry(
-        _ notice: MenuNotice,
-        lifetime: MenuNoticeLifetime,
-        now: Date
-    ) -> MenuNoticeEntry {
-        let entry: MenuNoticeEntry
-        switch lifetime {
-        case .operationBound:
-            entry = .operationBound(notice)
-        case .timed(let duration):
-            entry = .timed(notice, now: now, duration: duration)
-        case .persistent:
-            entry = .persistent(notice)
-        }
-
-        scheduleNoticeExpiryRefreshIfNeeded(for: entry, now: now)
-        return entry
-    }
-
-    private func scheduleNoticeExpiryRefreshIfNeeded(
-        for entry: MenuNoticeEntry,
-        now: Date
-    ) {
-        pendingNoticeExpiryRefresh?.cancel()
-        pendingNoticeExpiryRefresh = nil
-
-        guard let expiresAt = entry.expiresAt else {
-            return
-        }
-
-        let delay = max(0, expiresAt.timeIntervalSince(now))
-        let workItem = DispatchWorkItem { [weak self] in
-            self?.pendingNoticeExpiryRefresh = nil
-            self?.rebuildMenu(reason: "notice-expired")
-        }
-        pendingNoticeExpiryRefresh = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+        transientMenuNotices.presentSessionManagerNotice(
+            notice,
+            lifetime: lifetime,
+            now: now,
+            isForegroundOperationActive: isPerformingSafeSwitchOperation,
+            isLaunchingSessionManager: isLaunchingSessionManager
+        )
     }
 
     private func beginForegroundOperation(_ operation: ForegroundOperation) -> Bool {
@@ -511,64 +464,25 @@ final class AppController: NSObject, NSMenuDelegate {
 
     private func updateStatusTitle() {
         guard let button = statusItem.button else { return }
-
-        switch settings.statusItemStyle {
-        case .text:
-            button.image = statusItemRenderer.makeBrandImage(for: button.effectiveAppearance)
-            button.imagePosition = .imageLeading
-            button.imageScaling = .scaleNone
-
-            let title: String
-            if let currentSnapshot {
-                title = currentStatusSummary(for: currentSnapshot)
-            } else if isRefreshing {
-                title = AppLocalization.localized(en: "Refreshing", zh: "刷新中")
-            } else if currentError != nil {
-                title = AppLocalization.localized(en: "Read failed", zh: "读取失败")
-            } else {
-                title = AppLocalization.statusPlaceholderSummary()
+        let apiKeyDetails = currentSnapshot?.account.type == "apiKey"
+            ? (try? store.currentRuntimeMaterial()).flatMap {
+                apiKeyProfileDetails(authData: $0.authData, configData: $0.configData)
             }
-
-            statusItem.length = NSStatusItem.variableLength
-            button.title = title
-
-        case .meter:
-            button.title = ""
-            button.imagePosition = .imageOnly
-            button.imageScaling = .scaleProportionallyUpOrDown
-            statusItem.length = NSStatusItem.squareLength
-
-            if currentSnapshot?.account.type == "apiKey" {
-                button.image = statusItemRenderer.makeBrandImage(for: button.effectiveAppearance)
-            } else {
-                let windows = quotaDisplayWindows(from: currentSnapshot)
-                let primaryRemaining = windows.first?.window.remainingPercent ?? 0
-                let secondaryRemaining = windows.dropFirst().first?.window.remainingPercent ?? 0
-                button.image = statusItemRenderer.makeMeterImage(
-                    primaryRemaining: primaryRemaining / 100,
-                    secondaryRemaining: secondaryRemaining / 100,
-                    state: currentMeterIconState()
-                )
-            }
-        }
-    }
-
-    private func currentMeterIconState() -> MeterIconState {
-        if currentError != nil {
-            return .degraded
-        }
-
-        if isDataStale {
-            return .stale
-        }
-
-        return .normal
-    }
-
-    private var isDataStale: Bool {
-        isSnapshotDataStale(
-            lastRefreshAt: lastRefreshAt,
-            refreshIntervalPreset: settings.refreshIntervalPreset
+            : nil
+        let presentation = buildStatusItemPresentation(
+            snapshot: currentSnapshot,
+            apiKeyDetails: apiKeyDetails,
+            statusItemStyle: settings.statusItemStyle,
+            refreshIntervalPreset: settings.refreshIntervalPreset,
+            isRefreshing: isRefreshing,
+            currentError: currentError,
+            lastRefreshAt: lastRefreshAt
+        )
+        applyStatusItemPresentation(
+            presentation,
+            to: button,
+            statusItem: statusItem,
+            renderer: statusItemRenderer
         )
     }
 
@@ -590,179 +504,29 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private func addQuotaOverviewSection() {
-        if let quotaOverviewState,
-           !quotaOverviewState.boardTiles.isEmpty {
-            for tile in quotaOverviewState.boardTiles {
-                menu.addItem(makeQuotaOverviewRowItem(for: tile))
-            }
-        } else {
-            addDisabledItem(AppLocalization.localized(en: "No saved accounts", zh: "暂无已保存账号"))
+        for item in buildQuotaOverviewMenuItems(
+            quotaOverviewState: quotaOverviewState,
+            refreshIntervalPreset: settings.refreshIntervalPreset,
+            isPerformingSafeSwitchOperation: isPerformingSafeSwitchOperation,
+            target: self,
+            activateSavedAccountAction: #selector(activateSavedAccountTapped(_:))
+        ) {
+            menu.addItem(item)
         }
-
-        let allAccountsItem = NSMenuItem(
-            title: AppLocalization.localized(en: "All Accounts", zh: "全部账号"),
-            action: nil,
-            keyEquivalent: ""
-        )
-        allAccountsItem.submenu = makeAllAccountsMenu()
-        menu.addItem(allAccountsItem)
-    }
-
-    private func makeQuotaOverviewRowItem(for tile: QuotaTileViewModel) -> NSMenuItem {
-        let item = NSMenuItem(
-            title: tile.profile.displayName,
-            action: tile.profile.isCurrent ? nil : #selector(activateSavedAccountTapped(_:)),
-            keyEquivalent: ""
-        )
-        item.target = self
-        item.representedObject = tile.profile.id
-        item.isEnabled = !tile.profile.isCurrent && !isPerformingSafeSwitchOperation
-        item.view = AccountMenuRowView(
-            model: AccountMenuRowModel(
-                name: tile.profile.displayName,
-                primaryUsageText: tile.primaryText,
-                secondaryUsageText: tile.secondaryText,
-                indicatorColor: quotaOverviewIndicatorColor(for: tile.state),
-                isCurrent: tile.profile.isCurrent,
-                isEnabled: !tile.profile.isCurrent && !isPerformingSafeSwitchOperation
-            )
-        )
-        return item
-    }
-
-    private func quotaOverviewIndicatorColor(for state: QuotaTileState) -> NSColor {
-        switch state {
-        case .healthy:
-            return .systemGreen
-        case .lowQuota:
-            return .systemYellow
-        case .stale:
-            return .systemOrange
-        case .signInRequired, .expired, .readFailure:
-            return .systemRed
-        }
-    }
-
-    private func makeAllAccountsMenu() -> NSMenu {
-        let submenu = NSMenu()
-
-        guard let quotaOverviewState,
-              !quotaOverviewState.sections.isEmpty else {
-            let emptyItem = NSMenuItem(
-                title: AppLocalization.localized(en: "No saved accounts", zh: "暂无已保存账号"),
-                action: nil,
-                keyEquivalent: ""
-            )
-            emptyItem.isEnabled = false
-            submenu.addItem(emptyItem)
-            return submenu
-        }
-
-        for (sectionIndex, section) in quotaOverviewState.sections.enumerated() {
-            let header = NSMenuItem(title: section.title, action: nil, keyEquivalent: "")
-            header.isEnabled = false
-            submenu.addItem(header)
-
-            for profile in section.profiles {
-                let presentation = buildAllAccountsMenuItemPresentation(
-                    for: profile,
-                    refreshIntervalPreset: settings.refreshIntervalPreset,
-                    isPerformingSafeSwitchOperation: isPerformingSafeSwitchOperation
-                )
-                let item = NSMenuItem(
-                    title: presentation.title,
-                    action: presentation.triggersDirectSwitch ? #selector(activateSavedAccountTapped(_:)) : nil,
-                    keyEquivalent: ""
-                )
-                item.target = self
-                item.representedObject = profile.id
-                item.state = presentation.showsCheckmark ? .on : .off
-                item.isEnabled = presentation.isEnabled
-                submenu.addItem(item)
-            }
-
-            if sectionIndex < quotaOverviewState.sections.count - 1 {
-                submenu.addItem(.separator())
-            }
-        }
-
-        return submenu
     }
 
     private func makeMaintenanceMenu() -> NSMenu {
-        let submenu = NSMenu()
-
-        let refreshItem = NSMenuItem(
-            title: isRefreshing
-                ? AppLocalization.localized(en: "Refreshing…", zh: "刷新中…")
-                : AppLocalization.localized(en: "Refresh All", zh: "全部刷新"),
-            action: #selector(refreshTapped),
-            keyEquivalent: ""
+        buildMaintenanceMenu(
+            isRefreshing: isRefreshing,
+            isLaunchingSessionManager: isLaunchingSessionManager,
+            isPerformingSafeSwitchOperation: isPerformingSafeSwitchOperation,
+            hasRollbackRestorePoint: safeSwitchCenterState?.latestRestorePoint != nil,
+            target: self,
+            refreshAction: #selector(refreshTapped),
+            manageSessionsAction: #selector(manageSessionsTapped),
+            repairAction: #selector(repairNowTapped),
+            rollbackAction: #selector(rollbackLastChangeTapped)
         )
-        refreshItem.target = self
-        refreshItem.isEnabled = !isRefreshing && !isPerformingSafeSwitchOperation
-        submenu.addItem(refreshItem)
-
-        let sessionManagerItem = NSMenuItem(
-            title: isLaunchingSessionManager
-                ? AppLocalization.localized(en: "Opening Session Manager…", zh: "正在打开 Session Manager…")
-                : AppLocalization.localized(en: "Open Session Manager", zh: "打开 Session Manager"),
-            action: #selector(manageSessionsTapped),
-            keyEquivalent: ""
-        )
-        sessionManagerItem.target = self
-        sessionManagerItem.isEnabled = !isLaunchingSessionManager && !isPerformingSafeSwitchOperation
-        submenu.addItem(sessionManagerItem)
-
-        submenu.addItem(.separator())
-
-        let repairItem = NSMenuItem(
-            title: AppLocalization.localized(en: "Repair Now", zh: "立即修复"),
-            action: #selector(repairNowTapped),
-            keyEquivalent: ""
-        )
-        repairItem.target = self
-        repairItem.isEnabled = !isPerformingSafeSwitchOperation
-        submenu.addItem(repairItem)
-
-        let rollbackItem = NSMenuItem(
-            title: AppLocalization.localized(en: "Rollback Last Change", zh: "回滚上次变更"),
-            action: #selector(rollbackLastChangeTapped),
-            keyEquivalent: ""
-        )
-        rollbackItem.target = self
-        rollbackItem.isEnabled = !isPerformingSafeSwitchOperation && safeSwitchCenterState?.latestRestorePoint != nil
-        submenu.addItem(rollbackItem)
-
-        return submenu
-    }
-
-    private func accountUsageSummary(
-        window: RateLimitWindow?,
-        label: String,
-        dateStyle: UsageDateStyle
-    ) -> String {
-        guard let window else { return "\(label) -  -" }
-        let resetText = formatUsageResetDate(window.resetDate, style: dateStyle)
-        return "\(label) \(window.remainingPercentText)  \(resetText)"
-    }
-
-    private func quotaUsageSummaryLines(for snapshot: CodexSnapshot) -> [String] {
-        quotaDisplayWindows(from: snapshot).map { quotaWindow in
-            let dateStyle: UsageDateStyle
-            if let duration = quotaWindow.window.windowDurationMins,
-               duration >= 1_440 {
-                dateStyle = .monthDay
-            } else {
-                dateStyle = .time
-            }
-
-            return accountUsageSummary(
-                window: quotaWindow.window,
-                label: quotaWindow.label,
-                dateStyle: dateStyle
-            )
-        }
     }
 
     private func condensedProfileErrorText(
@@ -859,7 +623,7 @@ final class AppController: NSObject, NSMenuDelegate {
         targetProfile: ProviderProfile,
         preview: SwitchOperationPreview
     ) -> Bool {
-        runForegroundModalPresentation {
+        foregroundPresentationController.runModal {
             let alert = NSAlert()
             alert.messageText = AppLocalization.localized(
                 en: "Switch safely to \(targetProfile.displayName)?",
@@ -885,7 +649,7 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private func confirmRollback(restorePoint: RestorePointManifest) -> Bool {
-        runForegroundModalPresentation {
+        foregroundPresentationController.runModal {
             let alert = NSAlert()
             alert.messageText = AppLocalization.localized(en: "Rollback the latest safe switch?", zh: "要回滚最近一次安全切换吗？")
             alert.informativeText = [
@@ -933,7 +697,7 @@ final class AppController: NSObject, NSMenuDelegate {
               let fields = apiAccountPromptController.prompt(
                 runModalPresentation: { [weak self] body in
                     guard let self else { return nil }
-                    return self.runForegroundModalPresentation(body)
+                    return self.foregroundPresentationController.runModal(body)
                 },
                 userFacingMessage: { [weak self] error in
                     self?.userFacingMessage(for: error) ?? error.localizedDescription
@@ -980,12 +744,10 @@ final class AppController: NSObject, NSMenuDelegate {
                 )
             } catch {
                 self.presentSafeSwitchNotice(
-                    MenuNotice(
-                        kind: .error,
-                        message: AppLocalization.localized(
-                            en: "Add API account failed: \(self.userFacingMessage(for: error))",
-                            zh: "添加 API 账号失败：\(self.userFacingMessage(for: error))"
-                        )
+                    self.localizedErrorNotice(
+                        en: "Add API account failed",
+                        zh: "添加 API 账号失败",
+                        error: error
                     ),
                     lifetime: .persistent
                 )
@@ -1035,12 +797,10 @@ final class AppController: NSObject, NSMenuDelegate {
             )
         } catch {
             presentSafeSwitchNotice(
-                MenuNotice(
-                    kind: .error,
-                    message: AppLocalization.localized(
-                        en: "Rename failed: \(userFacingMessage(for: error))",
-                        zh: "重命名失败：\(userFacingMessage(for: error))"
-                    )
+                localizedErrorNotice(
+                    en: "Rename failed",
+                    zh: "重命名失败",
+                    error: error
                 ),
                 lifetime: .persistent
             )
@@ -1088,12 +848,10 @@ final class AppController: NSObject, NSMenuDelegate {
             )
         } catch {
             presentSafeSwitchNotice(
-                MenuNotice(
-                    kind: .error,
-                    message: AppLocalization.localized(
-                        en: "Forget account failed: \(userFacingMessage(for: error))",
-                        zh: "移除账号失败：\(userFacingMessage(for: error))"
-                    )
+                localizedErrorNotice(
+                    en: "Forget account failed",
+                    zh: "移除账号失败",
+                    error: error
                 ),
                 lifetime: .persistent
             )
@@ -1147,24 +905,22 @@ final class AppController: NSObject, NSMenuDelegate {
                     do {
                         _ = try self.vaultStore.noteAccountUsed(id: targetProfile.id, writer: writer)
                     } catch {
-                        self.statusNotice = MenuNotice(
+                        self.statusNotice = self.localizedErrorNotice(
                             kind: .warning,
-                            message: AppLocalization.localized(
-                                en: "Switched successfully, but the saved account usage timestamp could not be updated: \(self.userFacingMessage(for: error))",
-                                zh: "切换已完成，但无法更新账号最近使用时间：\(self.userFacingMessage(for: error))"
-                            )
+                            en: "Switched successfully, but the saved account usage timestamp could not be updated",
+                            zh: "切换已完成，但无法更新账号最近使用时间",
+                            error: error
                         )
                     }
                     self.settings.preferredAccountID = targetProfile.id
                     do {
                         try self.store.saveSettings(self.settings, writer: writer)
                     } catch {
-                        self.statusNotice = MenuNotice(
+                        self.statusNotice = self.localizedErrorNotice(
                             kind: .warning,
-                            message: AppLocalization.localized(
-                                en: "Switched successfully, but the preferred account could not be saved: \(self.userFacingMessage(for: error))",
-                                zh: "切换已完成，但无法保存默认账号：\(self.userFacingMessage(for: error))"
-                            )
+                            en: "Switched successfully, but the preferred account could not be saved",
+                            zh: "切换已完成，但无法保存默认账号",
+                            error: error
                         )
                     }
                 }
@@ -1180,12 +936,12 @@ final class AppController: NSObject, NSMenuDelegate {
                 )
             } catch {
                 self.presentSafeSwitchNotice(
-                    MenuNotice(
-                        kind: .error,
-                        message: AppLocalization.localized(
-                            en: "Safe switch failed: \(self.userFacingMessage(for: error)). Use “Rollback Last Change” if needed.",
-                            zh: "安全切换失败：\(self.userFacingMessage(for: error))。如有需要，请使用“回滚上次变更”。"
-                        )
+                    self.localizedErrorNotice(
+                        en: "Safe switch failed",
+                        zh: "安全切换失败",
+                        error: error,
+                        suffixEN: ". Use “Rollback Last Change” if needed.",
+                        suffixZH: "。如有需要，请使用“回滚上次变更”。"
                     ),
                     lifetime: .persistent
                 )
@@ -1229,12 +985,10 @@ final class AppController: NSObject, NSMenuDelegate {
                 )
             } catch {
                 self.presentSafeSwitchNotice(
-                    MenuNotice(
-                        kind: .error,
-                        message: AppLocalization.localized(
-                            en: "Repair failed: \(self.userFacingMessage(for: error))",
-                            zh: "修复失败：\(self.userFacingMessage(for: error))"
-                        )
+                    self.localizedErrorNotice(
+                        en: "Repair failed",
+                        zh: "修复失败",
+                        error: error
                     ),
                     lifetime: .persistent
                 )
@@ -1283,12 +1037,10 @@ final class AppController: NSObject, NSMenuDelegate {
                 )
             } catch {
                 self.presentSafeSwitchNotice(
-                    MenuNotice(
-                        kind: .error,
-                        message: AppLocalization.localized(
-                            en: "Rollback failed: \(self.userFacingMessage(for: error))",
-                            zh: "回滚失败：\(self.userFacingMessage(for: error))"
-                        )
+                    self.localizedErrorNotice(
+                        en: "Rollback failed",
+                        zh: "回滚失败",
+                        error: error
                     ),
                     lifetime: .persistent
                 )
@@ -1323,7 +1075,10 @@ final class AppController: NSObject, NSMenuDelegate {
 
             do {
                 _ = try await self.sessionManagerCoordinator.openInBrowser()
-                self.sessionManagerNotice = nil
+                self.transientMenuNotices.clearSessionManagerNotice(
+                    isForegroundOperationActive: self.isPerformingSafeSwitchOperation,
+                    isLaunchingSessionManager: self.isLaunchingSessionManager
+                )
             } catch {
                 self.presentSessionManagerNotice(
                     MenuNotice(
@@ -1347,76 +1102,14 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private func presentSettingsWindow() {
-        let wasVisible = settingsPresenter.isVisible
-        if !wasVisible {
-            beginForegroundPresentation()
+        if settingsWindowCoordinator.show(
+            state: currentSettingsWindowPresentationState(),
+            callbacks: makeSettingsPresenterCallbacks()
+        ) {
+            foregroundPresentationController.begin()
+        } else {
+            foregroundPresentationController.activate()
         }
-        let accountPanelState = buildSettingsAccountPanelState(
-            vaultSnapshot: vaultSnapshot,
-            vaultProfiles: vaultProfiles,
-            currentProviderProfile: currentProviderProfile,
-            refreshIntervalPreset: settings.refreshIntervalPreset,
-            actionsEnabled: !isPerformingSafeSwitchOperation
-        )
-        settingsPresenter.show(
-            settings: settings,
-            accountPanelState: accountPanelState,
-            callbacks: SettingsPresenterCallbacks(
-                onSettingsChanged: { [weak self] updatedSettings in
-                    guard let self else { return }
-                    let previousSettings = self.settings
-                    do {
-                        self.settings = try applySettingsTransaction(
-                            previous: previousSettings,
-                            updated: updatedSettings,
-                            syncLaunchAtLogin: { enabled in
-                                try self.launchAtLoginManager.sync(enabled: enabled)
-                            },
-                            saveSettings: { settings in
-                                try self.store.saveSettings(settings)
-                            }
-                        )
-                    } catch {
-                        self.settings = previousSettings
-                        self.settingsPresenter.update(
-                            settings: previousSettings,
-                            accountPanelState: buildSettingsAccountPanelState(
-                                vaultSnapshot: self.vaultSnapshot,
-                                vaultProfiles: self.vaultProfiles,
-                                currentProviderProfile: self.currentProviderProfile,
-                                refreshIntervalPreset: self.settings.refreshIntervalPreset,
-                                actionsEnabled: !self.isPerformingSafeSwitchOperation
-                            )
-                        )
-                        self.statusNotice = MenuNotice(kind: .error, message: self.userFacingMessage(for: error))
-                    }
-                    self.scheduleRefreshTimer()
-                    self.refreshSettingsUI()
-                },
-                onAddChatGPTAccount: { [weak self] in
-                    self?.addChatGPTAccountTapped()
-                },
-                onAddAPIAccount: { [weak self] in
-                    self?.addAPIAccountTapped()
-                },
-                onActivateAccount: { [weak self] identifier in
-                    self?.activateSavedAccount(identifier: identifier)
-                },
-                onRenameAccount: { [weak self] identifier in
-                    self?.renameSavedAccount(identifier: identifier)
-                },
-                onForgetAccount: { [weak self] identifier in
-                    self?.forgetSavedAccount(identifier: identifier)
-                },
-                onOpenVaultFolder: { [weak self] in
-                    self?.openVaultFolder()
-                },
-                onWindowClosed: { [weak self] in
-                    self?.endForegroundPresentationIfPossible()
-                }
-            )
-        )
-        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func openVaultFolder() {
@@ -1427,12 +1120,10 @@ final class AppController: NSObject, NSMenuDelegate {
             )
             NSWorkspace.shared.activateFileViewerSelecting([store.accountsRootURL])
         } catch {
-            statusNotice = MenuNotice(
-                kind: .error,
-                message: AppLocalization.localized(
-                    en: "Could not open the local vault folder: \(userFacingMessage(for: error))",
-                    zh: "无法打开本地账号仓文件夹：\(userFacingMessage(for: error))"
-                )
+            statusNotice = localizedErrorNotice(
+                en: "Could not open the local vault folder",
+                zh: "无法打开本地账号仓文件夹",
+                error: error
             )
             rebuildMenu(reason: "open-vault-error")
         }
@@ -1443,42 +1134,70 @@ final class AppController: NSObject, NSMenuDelegate {
         NSApplication.shared.terminate(nil)
     }
 
-    private func currentStatusSummary(for snapshot: CodexSnapshot) -> String {
-        if snapshot.account.type == "apiKey" {
-            let details = (try? store.currentRuntimeMaterial()).flatMap {
-                apiKeyProfileDetails(authData: $0.authData, configData: $0.configData)
-            }
-            return apiKeyStatusTexts(details: details).0
-        }
-
-        let windows = quotaDisplayWindows(from: snapshot)
-        guard !windows.isEmpty else {
-            return AppLocalization.statusPlaceholderSummary()
-        }
-        return windows.map(compactWindowSummary).joined(separator: " ")
-    }
-
-    private func compactWindowSummary(_ quotaWindow: QuotaDisplayWindow) -> String {
-        "\(quotaWindow.label)\(quotaWindow.window.remainingPercentText)"
-    }
-
-    private func formatUsageResetDate(_ date: Date?, style: UsageDateStyle) -> String {
-        guard let date else { return "-" }
-
-        let formatter = DateFormatter()
-        formatter.locale = AppLocalization.locale
-        switch style {
-        case .time:
-            formatter.dateFormat = "HH:mm"
-        case .monthDay:
-            formatter.setLocalizedDateFormatFromTemplate("MMM d")
-        }
-        return formatter.string(from: date)
-    }
-
     private func protectedMutationFileURLs(forAccountIDs accountIDs: [String]) throws -> [URL] {
-        let additionalFiles = try vaultStore.allProtectedFileURLs() + vaultStore.protectedMutationFileURLs(forAccountIDs: accountIDs)
-        return deduplicatedFileURLs(store.protectedMutationFileURLs(additionalFiles: additionalFiles))
+        let additionalFiles = vaultStore.protectedMutationFileURLs(forAccountIDs: accountIDs)
+        return deduplicatedFileURLs(store.accountMutationFileURLs(additionalFiles: additionalFiles))
+    }
+
+    private func currentSettingsWindowPresentationState() -> SettingsWindowPresentationState {
+        SettingsWindowPresentationState(
+            settings: settings,
+            accountPanelState: buildSettingsAccountPanelState(
+                vaultSnapshot: vaultSnapshot,
+                vaultProfiles: vaultProfiles,
+                currentProviderProfile: currentProviderProfile,
+                refreshIntervalPreset: settings.refreshIntervalPreset,
+                actionsEnabled: !isPerformingSafeSwitchOperation
+            )
+        )
+    }
+
+    private func makeSettingsPresenterCallbacks() -> SettingsPresenterCallbacks {
+        SettingsPresenterCallbacks(
+            onSettingsChanged: { [weak self] updatedSettings in
+                guard let self else { return }
+                let previousSettings = self.settings
+                do {
+                    self.settings = try applySettingsTransaction(
+                        previous: previousSettings,
+                        updated: updatedSettings,
+                        syncLaunchAtLogin: { enabled in
+                            try self.launchAtLoginManager.sync(enabled: enabled)
+                        },
+                        saveSettings: { settings in
+                            try self.store.saveSettings(settings)
+                        }
+                    )
+                } catch {
+                    self.settings = previousSettings
+                    self.settingsWindowCoordinator.update(state: self.currentSettingsWindowPresentationState())
+                    self.statusNotice = MenuNotice(kind: .error, message: self.userFacingMessage(for: error))
+                }
+                self.scheduleRefreshTimer()
+                self.refreshSettingsUI()
+            },
+            onAddChatGPTAccount: { [weak self] in
+                self?.addChatGPTAccountTapped()
+            },
+            onAddAPIAccount: { [weak self] in
+                self?.addAPIAccountTapped()
+            },
+            onActivateAccount: { [weak self] identifier in
+                self?.activateSavedAccount(identifier: identifier)
+            },
+            onRenameAccount: { [weak self] identifier in
+                self?.renameSavedAccount(identifier: identifier)
+            },
+            onForgetAccount: { [weak self] identifier in
+                self?.forgetSavedAccount(identifier: identifier)
+            },
+            onOpenVaultFolder: { [weak self] in
+                self?.openVaultFolder()
+            },
+            onWindowClosed: { [weak self] in
+                self?.foregroundPresentationController.endIfPossible()
+            }
+        )
     }
 
     private func deduplicatedFileURLs(_ urls: [URL]) -> [URL] {
@@ -1564,12 +1283,10 @@ final class AppController: NSObject, NSMenuDelegate {
             vaultProfiles = []
             availableSwitchTargets = []
             presentSafeSwitchNotice(
-                MenuNotice(
-                    kind: .error,
-                    message: AppLocalization.localized(
-                        en: "Failed to read saved accounts: \(userFacingMessage(for: error))",
-                        zh: "读取已保存账号失败：\(userFacingMessage(for: error))"
-                    )
+                localizedErrorNotice(
+                    en: "Failed to read saved accounts",
+                    zh: "读取已保存账号失败",
+                    error: error
                 ),
                 lifetime: .persistent
             )
@@ -1589,19 +1306,25 @@ final class AppController: NSObject, NSMenuDelegate {
             )
         ) { [weak self] records in
             guard let self else { return }
-            self.vaultQuotaRecords = Dictionary(uniqueKeysWithValues: records.map { ($0.accountID, $0) })
+            self.applyQuotaRefreshRecords(records)
+            self.scheduleVaultPresentationRefresh(currentRuntimeMaterial: currentRuntimeMaterial)
+        } onComplete: { [weak self] records in
+            guard let self else { return }
+            self.applyQuotaRefreshRecords(records)
             do {
                 try self.quotaCacheStore.save(records)
             } catch {
-                self.statusNotice = MenuNotice(
+                self.statusNotice = self.localizedErrorNotice(
                     kind: .warning,
-                    message: AppLocalization.localized(
-                        en: "Quota cache could not be updated: \(self.userFacingMessage(for: error))",
-                        zh: "额度缓存无法更新：\(self.userFacingMessage(for: error))"
-                    )
+                    en: "Quota cache could not be updated",
+                    zh: "额度缓存无法更新",
+                    error: error
                 )
             }
-            self.scheduleVaultPresentationRefresh(currentRuntimeMaterial: currentRuntimeMaterial)
+            self.scheduleVaultPresentationRefresh(
+                currentRuntimeMaterial: currentRuntimeMaterial,
+                delay: 0
+            )
         }
     }
 
@@ -1637,12 +1360,31 @@ final class AppController: NSObject, NSMenuDelegate {
         )
     }
 
+    private func applyQuotaRefreshRecords(_ records: [VaultQuotaSnapshotRecord]) {
+        vaultQuotaRecords = Dictionary(uniqueKeysWithValues: records.map { ($0.accountID, $0) })
+    }
+
+    private func normalizeTransientMenuNotices(now: Date = Date()) {
+        transientMenuNotices.normalize(
+            now: now,
+            isForegroundOperationActive: isPerformingSafeSwitchOperation,
+            isLaunchingSessionManager: isLaunchingSessionManager
+        )
+    }
+
+    private func refreshTimeSensitivePresentationState(now: Date = Date()) {
+        normalizeTransientMenuNotices(now: now)
+        refreshQuotaOverviewState(now: now)
+        updateStatusTitle()
+        rebuildMenu(force: true, reason: "menu-open-temporal")
+    }
+
     private func promptForText(
         title: String,
         message: String,
         defaultValue: String
     ) -> String? {
-        runForegroundModalPresentation {
+        foregroundPresentationController.runModal {
             let alert = NSAlert()
             alert.messageText = title
             alert.informativeText = message
@@ -1663,7 +1405,7 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private func confirmForgetAccount(record: VaultAccountRecord) -> Bool {
-        runForegroundModalPresentation {
+        foregroundPresentationController.runModal {
             let alert = NSAlert()
             alert.messageText = AppLocalization.localized(
                 en: "Forget \(record.metadata.displayName)?",
@@ -1735,12 +1477,10 @@ final class AppController: NSObject, NSMenuDelegate {
                 }
 
                 self.presentSafeSwitchNotice(
-                    MenuNotice(
-                        kind: .error,
-                        message: AppLocalization.localized(
-                            en: "ChatGPT login failed: \(self.userFacingMessage(for: error))",
-                            zh: "ChatGPT 登录失败：\(self.userFacingMessage(for: error))"
-                        )
+                    self.localizedErrorNotice(
+                        en: "ChatGPT login failed",
+                        zh: "ChatGPT 登录失败",
+                        error: error
                     ),
                     lifetime: .persistent
                 )
@@ -1749,7 +1489,7 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private func confirmDeviceAuthFallback(error: Error) -> Bool {
-        runForegroundModalPresentation {
+        foregroundPresentationController.runModal {
             let alert = NSAlert()
             alert.messageText = AppLocalization.localized(en: "Browser login failed", zh: "浏览器登录失败")
             alert.informativeText = [
@@ -1764,7 +1504,7 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private func presentDeviceAuthInstructions(_ instructions: DeviceAuthInstructions) {
-        beginForegroundPresentation()
+        foregroundPresentationController.begin()
         if let url = URL(string: instructions.verificationURL) {
             _ = NSWorkspace.shared.open(url)
         }
@@ -1782,30 +1522,7 @@ final class AppController: NSObject, NSMenuDelegate {
         ].joined(separator: "\n")
         alert.addButton(withTitle: AppLocalization.localized(en: "Continue Waiting", zh: "继续等待"))
         _ = alert.runModal()
-        endForegroundPresentationIfPossible()
-    }
-
-    private func runForegroundModalPresentation<T>(_ body: () -> T) -> T {
-        beginForegroundPresentation()
-        defer { endForegroundPresentationIfPossible() }
-        return body()
-    }
-
-    private func beginForegroundPresentation() {
-        foregroundPresentationDepth += 1
-        if foregroundPresentationDepth == 1 {
-            _ = NSApp.setActivationPolicy(.regular)
-        }
-        NSApp.activate(ignoringOtherApps: true)
-    }
-
-    private func endForegroundPresentationIfPossible() {
-        foregroundPresentationDepth = max(0, foregroundPresentationDepth - 1)
-        guard foregroundPresentationDepth == 0,
-              !settingsPresenter.isVisible else {
-            return
-        }
-        _ = NSApp.setActivationPolicy(.accessory)
+        foregroundPresentationController.endIfPossible()
     }
 
     private func sortProviderProfiles(_ profiles: [ProviderProfile]) -> [ProviderProfile] {
@@ -1838,6 +1555,40 @@ final class AppController: NSObject, NSMenuDelegate {
 
     private func userFacingMessage(for error: Error) -> String {
         userFacingErrorMessage(error)
+    }
+
+    private func localizedErrorText(
+        en prefixEN: String,
+        zh prefixZH: String,
+        error: Error,
+        suffixEN: String = "",
+        suffixZH: String = ""
+    ) -> String {
+        let message = userFacingMessage(for: error)
+        return AppLocalization.localized(
+            en: "\(prefixEN): \(message)\(suffixEN)",
+            zh: "\(prefixZH)：\(message)\(suffixZH)"
+        )
+    }
+
+    private func localizedErrorNotice(
+        kind: MenuNoticeKind = .error,
+        en prefixEN: String,
+        zh prefixZH: String,
+        error: Error,
+        suffixEN: String = "",
+        suffixZH: String = ""
+    ) -> MenuNotice {
+        MenuNotice(
+            kind: kind,
+            message: localizedErrorText(
+                en: prefixEN,
+                zh: prefixZH,
+                error: error,
+                suffixEN: suffixEN,
+                suffixZH: suffixZH
+            )
+        )
     }
 
     func stopSessionManagerIfNeeded() {

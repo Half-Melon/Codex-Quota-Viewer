@@ -502,12 +502,12 @@
 
 @media (max-width: 767px) {
   .reader-shell {
-    height: auto;
-    min-height: auto;
+    height: 100%;
+    min-height: 0;
   }
 
   .reader-content {
-    overflow: visible;
+    overflow-y: auto;
   }
 
   .reader-toolbar,
