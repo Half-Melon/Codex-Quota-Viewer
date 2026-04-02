@@ -101,6 +101,19 @@ struct QuotaOverviewMenuItemPresentation: Equatable {
     let accessibilityLabel: String
 }
 
+struct QuotaOverviewRowPresentation: Equatable {
+    let name: String
+    let primaryRemainingText: String
+    let secondaryRemainingText: String
+    let primaryResetText: String
+    let secondaryResetText: String
+    let state: QuotaTileState
+    let isCurrent: Bool
+    let isEnabled: Bool
+    let triggersDirectSwitch: Bool
+    let accessibilityLabel: String
+}
+
 func buildSettingsAccountSections(
     _ inputs: [SettingsAccountPresentationInput]
 ) -> [SettingsAccountSection] {
@@ -202,6 +215,38 @@ func buildQuotaOverviewMenuItemPresentation(
         title: title,
         showsCheckmark: tile.profile.isCurrent,
         isEnabled: tile.profile.isCurrent || !isPerformingSafeSwitchOperation,
+        triggersDirectSwitch: !tile.profile.isCurrent && !isPerformingSafeSwitchOperation,
+        accessibilityLabel: accessibilityLabel
+    )
+}
+
+func buildQuotaOverviewRowPresentation(
+    for tile: QuotaTileViewModel,
+    isPerformingSafeSwitchOperation: Bool
+) -> QuotaOverviewRowPresentation {
+    let quotaTexts = quotaOverviewRowQuotaTexts(for: tile.profile)
+    let summary = joinedNonEmptyParts([
+        quotaTexts.primaryRemainingText,
+        quotaTexts.secondaryRemainingText,
+        quotaTexts.primaryResetText,
+        quotaTexts.secondaryResetText,
+    ])
+    let accessibilityLabel = tile.profile.isCurrent
+        ? AppLocalization.localized(
+            en: "Current account, \(tile.profile.displayName), \(summary)",
+            zh: "当前账号，\(tile.profile.displayName)，\(summary)"
+        )
+        : joinedNonEmptyParts([tile.profile.displayName, summary], separator: ", ")
+
+    return QuotaOverviewRowPresentation(
+        name: tile.profile.displayName,
+        primaryRemainingText: quotaTexts.primaryRemainingText,
+        secondaryRemainingText: quotaTexts.secondaryRemainingText,
+        primaryResetText: quotaTexts.primaryResetText,
+        secondaryResetText: quotaTexts.secondaryResetText,
+        state: tile.state,
+        isCurrent: tile.profile.isCurrent,
+        isEnabled: !tile.profile.isCurrent && !isPerformingSafeSwitchOperation,
         triggersDirectSwitch: !tile.profile.isCurrent && !isPerformingSafeSwitchOperation,
         accessibilityLabel: accessibilityLabel
     )

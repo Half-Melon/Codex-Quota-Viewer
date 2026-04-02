@@ -15,20 +15,32 @@ func buildQuotaOverviewMenuItems(
        !quotaOverviewState.boardTiles.isEmpty {
         items.append(
             contentsOf: quotaOverviewState.boardTiles.map { tile in
-                let presentation = buildQuotaOverviewMenuItemPresentation(
+                let presentation = buildQuotaOverviewRowPresentation(
                     for: tile,
                     isPerformingSafeSwitchOperation: isPerformingSafeSwitchOperation
                 )
                 let item = NSMenuItem(
-                    title: presentation.title,
+                    title: presentation.name,
                     action: presentation.triggersDirectSwitch ? activateSavedAccountAction : nil,
                     keyEquivalent: ""
                 )
                 item.target = target
                 item.representedObject = tile.profile.id
-                item.state = presentation.showsCheckmark ? .on : .off
                 item.isEnabled = presentation.isEnabled
                 item.toolTip = presentation.accessibilityLabel
+                item.view = AccountMenuRowView(
+                    model: AccountMenuRowModel(
+                        name: presentation.name,
+                        primaryRemainingText: presentation.primaryRemainingText,
+                        secondaryRemainingText: presentation.secondaryRemainingText,
+                        primaryResetText: presentation.primaryResetText,
+                        secondaryResetText: presentation.secondaryResetText,
+                        indicatorColor: quotaOverviewIndicatorColor(for: presentation.state),
+                        isCurrent: presentation.isCurrent,
+                        isEnabled: presentation.isEnabled,
+                        accessibilityLabel: presentation.accessibilityLabel
+                    )
+                )
                 return item
             }
         )
@@ -57,6 +69,19 @@ func buildQuotaOverviewMenuItems(
     items.append(allAccountsItem)
 
     return items
+}
+
+private func quotaOverviewIndicatorColor(for state: QuotaTileState) -> NSColor {
+    switch state {
+    case .healthy:
+        return .systemGreen
+    case .lowQuota:
+        return .systemYellow
+    case .stale:
+        return .systemOrange
+    case .signInRequired, .expired, .readFailure:
+        return .systemRed
+    }
 }
 
 @MainActor

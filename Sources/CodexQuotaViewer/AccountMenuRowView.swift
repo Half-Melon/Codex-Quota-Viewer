@@ -2,26 +2,32 @@ import AppKit
 
 struct AccountMenuRowModel {
     let name: String
-    let primaryUsageText: String
-    let secondaryUsageText: String
+    let primaryRemainingText: String
+    let secondaryRemainingText: String
+    let primaryResetText: String
+    let secondaryResetText: String
     let indicatorColor: NSColor
     let isCurrent: Bool
     let isEnabled: Bool
+    let accessibilityLabel: String
 }
 
 @MainActor
 final class AccountMenuRowView: NSView {
-    static let minimumWidth: CGFloat = 308
-    static let height: CGFloat = 50
+    static let minimumWidth: CGFloat = 372
+    static let height: CGFloat = 52
     private static let cardInset: CGFloat = 3
     private static let horizontalPadding: CGFloat = 12
-    private static let trailingColumnWidth: CGFloat = 118
+    private static let quotaColumnWidth: CGFloat = 74
+    private static let quotaColumnSpacing: CGFloat = 8
 
     private let cardView = NSView()
     private let indicatorView = AccountStatusDotView()
     private let nameField = NSTextField(labelWithString: "")
-    private let primaryUsageField = NSTextField(labelWithString: "")
-    private let secondaryUsageField = NSTextField(labelWithString: "")
+    private let primaryRemainingField = NSTextField(labelWithString: "")
+    private let secondaryRemainingField = NSTextField(labelWithString: "")
+    private let primaryResetField = NSTextField(labelWithString: "")
+    private let secondaryResetField = NSTextField(labelWithString: "")
 
     private var trackingAreaRef: NSTrackingArea?
     private var isHovered = false {
@@ -99,14 +105,16 @@ final class AccountMenuRowView: NSView {
     func apply(model: AccountMenuRowModel) {
         self.model = model
         nameField.stringValue = model.name
-        primaryUsageField.stringValue = model.primaryUsageText
-        secondaryUsageField.stringValue = model.secondaryUsageText
+        primaryRemainingField.stringValue = model.primaryRemainingText
+        secondaryRemainingField.stringValue = model.secondaryRemainingText
+        primaryResetField.stringValue = model.primaryResetText
+        secondaryResetField.stringValue = model.secondaryResetText
         indicatorView.fillColor = model.indicatorColor
         nameField.font = .systemFont(ofSize: 13, weight: .regular)
         alphaValue = 1
         updateAppearance()
         window?.invalidateCursorRects(for: self)
-        setAccessibilityLabel("\(model.name) \(model.primaryUsageText) \(model.secondaryUsageText)")
+        setAccessibilityLabel(model.accessibilityLabel)
     }
 
     private func setupView() {
@@ -127,19 +135,14 @@ final class AccountMenuRowView: NSView {
         nameField.textColor = .labelColor
         addSubview(nameField)
 
-        primaryUsageField.translatesAutoresizingMaskIntoConstraints = false
-        primaryUsageField.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        primaryUsageField.textColor = .secondaryLabelColor
-        primaryUsageField.alignment = .right
-        primaryUsageField.maximumNumberOfLines = 1
-        addSubview(primaryUsageField)
-
-        secondaryUsageField.translatesAutoresizingMaskIntoConstraints = false
-        secondaryUsageField.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        secondaryUsageField.textColor = .secondaryLabelColor
-        secondaryUsageField.alignment = .right
-        secondaryUsageField.maximumNumberOfLines = 1
-        addSubview(secondaryUsageField)
+        [primaryRemainingField, secondaryRemainingField, primaryResetField, secondaryResetField].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            $0.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+            $0.textColor = .secondaryLabelColor
+            $0.alignment = .right
+            $0.maximumNumberOfLines = 1
+            addSubview($0)
+        }
 
         NSLayoutConstraint.activate([
             widthAnchor.constraint(greaterThanOrEqualToConstant: Self.minimumWidth),
@@ -155,17 +158,28 @@ final class AccountMenuRowView: NSView {
             indicatorView.widthAnchor.constraint(equalToConstant: 8),
             indicatorView.heightAnchor.constraint(equalToConstant: 8),
 
-            primaryUsageField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.horizontalPadding),
-            primaryUsageField.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 9),
-            primaryUsageField.widthAnchor.constraint(equalToConstant: Self.trailingColumnWidth),
+            secondaryRemainingField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.horizontalPadding),
+            secondaryRemainingField.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 8),
+            secondaryRemainingField.widthAnchor.constraint(equalToConstant: Self.quotaColumnWidth),
 
-            secondaryUsageField.trailingAnchor.constraint(equalTo: primaryUsageField.trailingAnchor),
-            secondaryUsageField.topAnchor.constraint(equalTo: primaryUsageField.bottomAnchor, constant: 3),
-            secondaryUsageField.widthAnchor.constraint(equalTo: primaryUsageField.widthAnchor),
+            primaryRemainingField.trailingAnchor.constraint(
+                equalTo: secondaryRemainingField.leadingAnchor,
+                constant: -Self.quotaColumnSpacing
+            ),
+            primaryRemainingField.topAnchor.constraint(equalTo: secondaryRemainingField.topAnchor),
+            primaryRemainingField.widthAnchor.constraint(equalToConstant: Self.quotaColumnWidth),
+
+            secondaryResetField.trailingAnchor.constraint(equalTo: secondaryRemainingField.trailingAnchor),
+            secondaryResetField.topAnchor.constraint(equalTo: secondaryRemainingField.bottomAnchor, constant: 4),
+            secondaryResetField.widthAnchor.constraint(equalTo: secondaryRemainingField.widthAnchor),
+
+            primaryResetField.trailingAnchor.constraint(equalTo: primaryRemainingField.trailingAnchor),
+            primaryResetField.topAnchor.constraint(equalTo: secondaryResetField.topAnchor),
+            primaryResetField.widthAnchor.constraint(equalTo: primaryRemainingField.widthAnchor),
 
             nameField.leadingAnchor.constraint(equalTo: indicatorView.trailingAnchor, constant: 10),
-            nameField.centerYAnchor.constraint(equalTo: indicatorView.centerYAnchor),
-            nameField.trailingAnchor.constraint(lessThanOrEqualTo: primaryUsageField.leadingAnchor, constant: -12),
+            nameField.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 7),
+            nameField.trailingAnchor.constraint(lessThanOrEqualTo: primaryRemainingField.leadingAnchor, constant: -12),
         ])
     }
 

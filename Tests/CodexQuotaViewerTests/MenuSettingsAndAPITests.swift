@@ -265,9 +265,10 @@ func allAccountsMenuItemPresentationUsesCurrentCheckmarkAndDirectSwitchForOthers
     }
 }
 
+@MainActor
 @Test
-func quotaOverviewMenuPresentationUsesAccessibleSingleLineRowsAndApiOnlyEmptyState() {
-    withExclusiveAppLocalization {
+func quotaOverviewMenuRowsUseCustomViewAndShowDualQuotaColumns() throws {
+    try withExclusiveAppLocalization {
         AppLocalization.setPreferredLanguage(.en, preferredLanguages: ["en-US"])
         let now = Date(timeIntervalSince1970: 1_800_000_120)
         let api = makeTestProviderProfile(
@@ -297,22 +298,86 @@ func quotaOverviewMenuPresentationUsesAccessibleSingleLineRowsAndApiOnlyEmptySta
             secondaryText: "1w 79%",
             state: .healthy
         )
+        let items = buildQuotaOverviewMenuItems(
+            quotaOverviewState: QuotaOverviewState(
+                chatGPTCount: 1,
+                apiCount: 1,
+                boardTiles: [tile],
+                sections: []
+            ),
+            refreshIntervalPreset: .fiveMinutes,
+            isPerformingSafeSwitchOperation: false,
+            target: nil,
+            activateSavedAccountAction: #selector(NSResponder.cancelOperation(_:))
+        )
         let state = buildQuotaOverviewState(
             currentProfile: nil,
             vaultProfiles: [api],
             refreshIntervalPreset: .fiveMinutes,
             now: now
         )
+        let rowView = try #require(items.first?.view as? AccountMenuRowView)
 
-        let presentation = buildQuotaOverviewMenuItemPresentation(
-            for: tile,
-            isPerformingSafeSwitchOperation: false
-        )
+        let timeFormatter = DateFormatter()
+        timeFormatter.locale = AppLocalization.locale
+        timeFormatter.dateFormat = "HH:mm"
 
-        #expect(presentation.title == "current@example.com · 5h 81% · 1w 79%")
-        #expect(presentation.showsCheckmark == true)
-        #expect(presentation.accessibilityLabel.contains("Current account"))
+        let dateFormatter = DateFormatter()
+        dateFormatter.locale = AppLocalization.locale
+        dateFormatter.setLocalizedDateFormatFromTemplate("MMM d")
+
+        #expect(findLabel(in: rowView) { $0 == "current@example.com" } != nil)
+        #expect(findLabel(in: rowView) { $0 == "5h 81%" } != nil)
+        #expect(findLabel(in: rowView) { $0 == "1w 79%" } != nil)
+        #expect(findLabel(in: rowView) { $0 == "5h \(timeFormatter.string(from: Date(timeIntervalSince1970: 1_800_000_360)))" } != nil)
+        #expect(findLabel(in: rowView) { $0 == "1w \(dateFormatter.string(from: Date(timeIntervalSince1970: 1_800_086_400)))" } != nil)
+        #expect((rowView.accessibilityLabel() ?? "").contains("Current account"))
         #expect(quotaOverviewEmptyStateMessage(for: state).contains("API accounts"))
+    }
+}
+
+@MainActor
+@Test
+func quotaOverviewMenuRowsPadWeeklyOnlyAccountsWithFiveHourPlaceholder() throws {
+    try withExclusiveAppLocalization {
+        AppLocalization.setPreferredLanguage(.en, preferredLanguages: ["en-US"])
+        let now = Date(timeIntervalSince1970: 1_800_000_200)
+        let free = makeTestProviderProfile(
+            id: "free",
+            displayName: "ai.krisxu@gmail.com",
+            authMode: .chatgpt,
+            snapshot: makeTestFreeWeeklySnapshot(
+                email: "ai.krisxu@gmail.com",
+                weeklyRemaining: 63,
+                fetchedAt: now
+            ),
+            isCurrent: true,
+            lastUsedAt: now,
+            healthStatus: .healthy,
+            errorMessage: nil
+        )
+        let state = buildQuotaOverviewState(
+            currentProfile: free,
+            vaultProfiles: [],
+            refreshIntervalPreset: .fiveMinutes,
+            now: now
+        )
+        let items = buildQuotaOverviewMenuItems(
+            quotaOverviewState: state,
+            refreshIntervalPreset: .fiveMinutes,
+            isPerformingSafeSwitchOperation: false,
+            target: nil,
+            activateSavedAccountAction: #selector(NSResponder.cancelOperation(_:))
+        )
+        let rowView = try #require(items.first?.view as? AccountMenuRowView)
+
+        let dateFormatter = DateFormatter()
+        dateFormatter.locale = AppLocalization.locale
+        dateFormatter.setLocalizedDateFormatFromTemplate("MMM d")
+
+        #expect(findLabel(in: rowView) { $0 == "5h -" } != nil)
+        #expect(findLabel(in: rowView) { $0 == "1w 63%" } != nil)
+        #expect(findLabel(in: rowView) { $0 == "1w \(dateFormatter.string(from: Date(timeIntervalSince1970: 1_800_086_400)))" } != nil)
     }
 }
 
@@ -439,8 +504,7 @@ func menuItemBuilderProducesStandardQuotaAndMaintenanceMenuItems() {
         )
 
         #expect(items.count == state.boardTiles.count + 1)
-        #expect(items.first?.view == nil)
-        #expect(items.first?.state == .on)
+        #expect(items.first?.view is AccountMenuRowView)
         #expect(items.first?.action == nil)
         #expect(items[1].action == #selector(NSResponder.cancelOperation(_:)))
         #expect(items.last?.submenu?.items.isEmpty == false)
@@ -582,6 +646,37 @@ func settingsWindowControllerInitializesForAccountsPanelState() {
 
         #expect(controller.window != nil)
         #expect(controller.window?.title == "Settings")
+    }
+}
+
+@MainActor
+@Test
+func settingsWindowControllerExplainsWhyAccountActionsAreDisabled() throws {
+    try withExclusiveAppLocalization {
+        AppLocalization.setPreferredLanguage(.en, preferredLanguages: ["en-US"])
+        let controller = SettingsWindowController(
+            settings: AppSettings(),
+            accountPanelState: SettingsAccountPanelState(
+                importStatusText: "Local vault: 3 saved accounts",
+                sections: [],
+                actionsEnabled: false
+            )
+        )
+
+        let contentView = try #require(controller.window?.contentView)
+        let tabView = try #require(findView(ofType: NSTabView.self, in: contentView))
+        let accountsView = try #require(tabView.tabViewItems.last?.view)
+        let addChatGPTButton = try #require(findButton(in: accountsView, title: "Sign in with ChatGPT"))
+        let addAPIButton = try #require(findButton(in: accountsView, title: "Add API Account"))
+        let statusLabel = try #require(
+            findLabel(in: accountsView) { $0.contains("Local vault: 3 saved accounts") }
+        )
+
+        #expect(addChatGPTButton.isEnabled == false)
+        #expect(addAPIButton.isEnabled == false)
+        #expect(statusLabel.stringValue.contains("Finish the current account operation before changing saved accounts."))
+        #expect(addChatGPTButton.toolTip == "Finish the current account operation before changing saved accounts.")
+        #expect(addAPIButton.toolTip == "Finish the current account operation before changing saved accounts.")
     }
 }
 
@@ -817,6 +912,37 @@ private func isDescendant(_ view: NSView, of ancestor: NSView) -> Bool {
         currentView = currentView?.superview
     }
     return false
+}
+
+@MainActor
+private func findButton(in root: NSView, title: String) -> NSButton? {
+    if let button = root as? NSButton, button.title == title {
+        return button
+    }
+
+    for subview in root.subviews {
+        if let match = findButton(in: subview, title: title) {
+            return match
+        }
+    }
+
+    return nil
+}
+
+@MainActor
+private func findLabel(in root: NSView, where predicate: (String) -> Bool) -> NSTextField? {
+    if let label = root as? NSTextField,
+       predicate(label.stringValue) {
+        return label
+    }
+
+    for subview in root.subviews {
+        if let match = findLabel(in: subview, where: predicate) {
+            return match
+        }
+    }
+
+    return nil
 }
 
 @MainActor

@@ -79,6 +79,13 @@ struct QuotaOverviewState: Equatable {
     }
 }
 
+struct QuotaOverviewRowQuotaTexts: Equatable {
+    let primaryRemainingText: String
+    let secondaryRemainingText: String
+    let primaryResetText: String
+    let secondaryResetText: String
+}
+
 private enum QuotaProfilePriority: Int, Comparable {
     case healthy = 0
     case limited = 1
@@ -201,6 +208,23 @@ func quotaTileSecondaryText(for profile: ProviderProfile) -> String {
             .map(compactQuotaWindowText)
             ?? ""
     }
+}
+
+func quotaOverviewRowQuotaTexts(for profile: ProviderProfile) -> QuotaOverviewRowQuotaTexts {
+    let windowsByLabel = Dictionary(
+        uniqueKeysWithValues: quotaDisplayWindows(for: profile).map { ($0.label, $0.window) }
+    )
+    let primaryLabel = "5h"
+    let secondaryLabel = "1w"
+    let primaryWindow = windowsByLabel[primaryLabel]
+    let secondaryWindow = windowsByLabel[secondaryLabel]
+
+    return QuotaOverviewRowQuotaTexts(
+        primaryRemainingText: quotaOverviewRowRemainingText(label: primaryLabel, window: primaryWindow),
+        secondaryRemainingText: quotaOverviewRowRemainingText(label: secondaryLabel, window: secondaryWindow),
+        primaryResetText: quotaOverviewRowResetText(label: primaryLabel, window: primaryWindow),
+        secondaryResetText: quotaOverviewRowResetText(label: secondaryLabel, window: secondaryWindow)
+    )
 }
 
 func allAccountsMenuText(
@@ -612,6 +636,32 @@ private func quotaDisplayWindows(for profile: ProviderProfile) -> [QuotaDisplayW
 
 private func compactQuotaWindowText(_ quotaWindow: QuotaDisplayWindow) -> String {
     "\(quotaWindow.label) \(quotaWindow.window.remainingPercentText)"
+}
+
+private func quotaOverviewRowRemainingText(label: String, window: RateLimitWindow?) -> String {
+    guard let window else {
+        return "\(label) -"
+    }
+
+    return "\(label) \(window.remainingPercentText)"
+}
+
+private func quotaOverviewRowResetText(label: String, window: RateLimitWindow?) -> String {
+    guard let window,
+          let date = window.resetDate else {
+        return "\(label) -"
+    }
+
+    let formatter = DateFormatter()
+    formatter.locale = AppLocalization.locale
+    switch quotaResetDateStyle(for: window) {
+    case .time:
+        formatter.dateFormat = "HH:mm"
+    case .monthDay:
+        formatter.setLocalizedDateFormatFromTemplate("MMM d")
+    }
+
+    return "\(label) \(formatter.string(from: date))"
 }
 
 private func quotaResetScheduleText(for profile: ProviderProfile) -> String {

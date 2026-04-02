@@ -197,8 +197,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
         importStatusLabel.font = .systemFont(ofSize: 12)
         importStatusLabel.textColor = .secondaryLabelColor
-        importStatusLabel.maximumNumberOfLines = 1
-        importStatusLabel.lineBreakMode = .byTruncatingTail
+        importStatusLabel.maximumNumberOfLines = 0
+        importStatusLabel.lineBreakMode = .byWordWrapping
         importStatusLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let headerStack = NSStackView(views: [buttonRow, importStatusLabel])
@@ -274,10 +274,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     }
 
     private func applyAccountPanelState() {
-        importStatusLabel.stringValue = accountPanelState.importStatusText
-        importStatusLabel.isHidden = accountPanelState.importStatusText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let actionsUnavailableExplanation = accountPanelState.actionsEnabled
+            ? nil
+            : AppLocalization.localized(
+                en: "Finish the current account operation before changing saved accounts.",
+                zh: "请先完成当前账号操作，再修改已保存账号。"
+            )
+        importStatusLabel.stringValue = joinedNonEmptyParts(
+            [accountPanelState.importStatusText, actionsUnavailableExplanation],
+            separator: "\n"
+        )
+        importStatusLabel.isHidden = importStatusLabel.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         addChatGPTButton.isEnabled = accountPanelState.actionsEnabled
         addAPIButton.isEnabled = accountPanelState.actionsEnabled
+        addChatGPTButton.toolTip = actionsUnavailableExplanation
+        addAPIButton.toolTip = actionsUnavailableExplanation
         openVaultButton.isEnabled = true
         accountsTableController.update(state: accountPanelState)
         window?.contentView?.layoutSubtreeIfNeeded()
