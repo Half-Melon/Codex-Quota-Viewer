@@ -121,7 +121,7 @@ export default function App() {
                 selectedIds={browser.checkedSessionIds}
                 onSearchChange={browser.setSearch}
                 onStatusChange={browser.setStatus}
-                onRescan={() => void browser.loadInitialIndex()}
+                onRescan={() => void browser.rescanIndex()}
                 onRepairOfficial={() =>
                   void browser.runAction(
                     "repair-official-all",

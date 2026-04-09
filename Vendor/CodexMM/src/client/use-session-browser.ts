@@ -290,7 +290,7 @@ export function useSessionBrowser(copy: TranslationSet) {
     setTargetCwd,
     setRestoreMode,
     setCheckedSessionIds,
-    loadInitialIndex,
+    rescanIndex,
     selectSession,
     showSessionList,
     toggleChecked,
@@ -309,6 +309,39 @@ export function useSessionBrowser(copy: TranslationSet) {
   };
 
   async function loadInitialIndex() {
+    const requestId = ++listRequestSequenceRef.current;
+
+    setLoadingSessions(true);
+    setError(null);
+
+    try {
+      const response = await listSessions(buildFilters("", DEFAULT_STATUS));
+
+      if (listRequestSequenceRef.current !== requestId) {
+        return;
+      }
+
+      setIndexedSessions(response.sessions);
+      const latest = latestListStateRef.current;
+      setListedSessions(filterVisibleSessions(response.sessions, latest.search, latest.status));
+      setHasLoadedInitialIndex(true);
+      setResumeCommand(null);
+      setFeedback(null);
+      setBatchFailures([]);
+    } catch (loadError) {
+      if (listRequestSequenceRef.current !== requestId) {
+        return;
+      }
+
+      setError(readError(loadError, copy));
+    } finally {
+      if (listRequestSequenceRef.current === requestId) {
+        setLoadingSessions(false);
+      }
+    }
+  }
+
+  async function rescanIndex() {
     const requestId = ++listRequestSequenceRef.current;
 
     setLoadingSessions(true);

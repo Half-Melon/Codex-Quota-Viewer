@@ -3,6 +3,20 @@ import Testing
 
 @testable import CodexQuotaViewer
 
+actor ConcurrentRefreshTracker {
+    private(set) var activeCount = 0
+    private(set) var maxActiveCount = 0
+
+    func begin() {
+        activeCount += 1
+        maxActiveCount = max(maxActiveCount, activeCount)
+    }
+
+    func end() {
+        activeCount -= 1
+    }
+}
+
 @Test
 func vaultQuotaCacheStorePersistsSnapshotRecords() throws {
     let harness = try makeHarness()
@@ -406,6 +420,153 @@ func vaultQuotaRefreshCoordinatorCoalescesEquivalentRequestsWithoutSecondFetchRo
     #expect(fetchCount == 1)
     #expect(records.count == 1)
     #expect(records.first?.accountID == record.id)
+}
+
+@MainActor
+@Test
+func vaultQuotaRefreshCoordinatorCurrentOnlyScopePreservesCachedNonCurrentRecordsWithoutFetchingThem() async {
+    let now = Date(timeIntervalSince1970: 1_800_000_240)
+    let currentRuntime = makeTestRuntimeMaterial(id: "current-only-runtime", authMode: .chatgpt)
+    let savedRuntime = makeTestRuntimeMaterial(id: "saved-runtime", authMode: .chatgpt)
+    let currentRecord = makeTestVaultRecord(
+        from: makeTestProviderProfile(
+            id: stableAccountRecordID(for: currentRuntime),
+            displayName: "current@example.com",
+            authMode: .chatgpt,
+            snapshot: nil,
+            runtimeMaterial: currentRuntime
+        ),
+        createdAt: Date(timeIntervalSince1970: 1_800_000_000)
+    )
+    let savedRecord = makeTestVaultRecord(
+        from: makeTestProviderProfile(
+            id: stableAccountRecordID(for: savedRuntime),
+            displayName: "saved@example.com",
+            authMode: .chatgpt,
+            snapshot: nil,
+            runtimeMaterial: savedRuntime
+        ),
+        createdAt: Date(timeIntervalSince1970: 1_800_000_000)
+    )
+    let currentProfile = buildProviderProfile(
+        id: currentRecord.id,
+        fallbackDisplayName: "current@example.com",
+        source: .current,
+        runtimeMaterial: currentRuntime,
+        snapshot: makeTestSnapshot(
+            email: "current@example.com",
+            primaryRemaining: 90,
+            secondaryRemaining: 80,
+            fetchedAt: now
+        ),
+        healthStatus: .healthy,
+        errorMessage: nil,
+        isCurrent: true,
+        quotaFetchedAt: now
+    )
+
+    var fetchCount = 0
+    let coordinator = VaultQuotaRefreshCoordinator { _ in
+        fetchCount += 1
+        return makeTestSnapshot(
+            email: "unexpected@example.com",
+            primaryRemaining: 0,
+            secondaryRemaining: 0,
+            fetchedAt: now
+        )
+    }
+
+    let records = await withCheckedContinuation { continuation in
+        var didResume = false
+        coordinator.requestRefresh(
+            .init(
+                currentProfile: currentProfile,
+                vaultAccounts: [currentRecord, savedRecord],
+                cachedRecords: [
+                    VaultQuotaSnapshotRecord(
+                        accountID: savedRecord.id,
+                        snapshot: makeTestSnapshot(
+                            email: "saved@example.com",
+                            primaryRemaining: 35,
+                            secondaryRemaining: 25,
+                            fetchedAt: now.addingTimeInterval(-600)
+                        ),
+                        healthStatus: .healthy,
+                        errorSummary: nil,
+                        fetchedAt: now.addingTimeInterval(-600),
+                        authMode: .chatgpt,
+                        isCurrent: false
+                    )
+                ],
+                refreshScope: .currentOnly
+            )
+        ) { latest in
+            guard !didResume, latest.count == 2 else {
+                return
+            }
+            didResume = true
+            continuation.resume(returning: latest)
+        }
+    }
+
+    #expect(fetchCount == 0)
+    #expect(records.first(where: { $0.accountID == currentRecord.id })?.snapshot?.account.email == "current@example.com")
+    #expect(records.first(where: { $0.accountID == savedRecord.id })?.snapshot?.account.email == "saved@example.com")
+}
+
+@MainActor
+@Test
+func vaultQuotaRefreshCoordinatorBoundsConcurrentAllAccountsFetches() async {
+    let now = Date(timeIntervalSince1970: 1_800_000_260)
+    let tracker = ConcurrentRefreshTracker()
+    let records = (1...4).map { index in
+        makeTestVaultRecord(
+            from: makeTestProviderProfile(
+                id: "acct-\(index)",
+                displayName: "account-\(index)@example.com",
+                authMode: .chatgpt,
+                snapshot: nil,
+                runtimeMaterial: makeTestRuntimeMaterial(
+                    id: "runtime-\(index)",
+                    authMode: .chatgpt,
+                    accountID: "acct-\(index)"
+                )
+            ),
+            createdAt: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+    }
+    let coordinator = VaultQuotaRefreshCoordinator(maxConcurrentChatGPTRefreshes: 2) { runtimeMaterial in
+        await tracker.begin()
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        await tracker.end()
+        return makeTestSnapshot(
+            email: "\(stableAccountRecordID(for: runtimeMaterial))@example.com",
+            primaryRemaining: 60,
+            secondaryRemaining: 50,
+            fetchedAt: now
+        )
+    }
+
+    let refreshed = await withCheckedContinuation { continuation in
+        var didResume = false
+        coordinator.requestRefresh(
+            .init(
+                currentProfile: nil,
+                vaultAccounts: records,
+                cachedRecords: [],
+                refreshScope: .allAccounts
+            )
+        ) { latest in
+            guard !didResume, latest.count == records.count, latest.allSatisfy({ $0.snapshot != nil }) else {
+                return
+            }
+            didResume = true
+            continuation.resume(returning: latest)
+        }
+    }
+
+    #expect(refreshed.count == 4)
+    #expect(await tracker.maxActiveCount <= 2)
 }
 
 @Test

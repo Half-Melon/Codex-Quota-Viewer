@@ -82,6 +82,42 @@ func resolveProfileIndicatorKind(
 
 @MainActor
 final class AppController: NSObject, NSMenuDelegate {
+    private enum ProfileRefreshIntent: Equatable {
+        case currentOnly
+        case allAccounts(refreshCurrentAccount: Bool)
+
+        var shouldRefreshCurrentAccount: Bool {
+            switch self {
+            case .currentOnly:
+                return true
+            case .allAccounts(let refreshCurrentAccount):
+                return refreshCurrentAccount
+            }
+        }
+
+        var quotaRefreshScope: VaultQuotaRefreshCoordinator.RefreshScope {
+            switch self {
+            case .currentOnly:
+                return .currentOnly
+            case .allAccounts:
+                return .allAccounts
+            }
+        }
+
+        func merged(with other: Self) -> Self {
+            switch (self, other) {
+            case (.currentOnly, .currentOnly):
+                return .currentOnly
+            case (.allAccounts(let refreshCurrentAccount), .currentOnly):
+                return .allAccounts(refreshCurrentAccount: refreshCurrentAccount)
+            case (.currentOnly, .allAccounts(let refreshCurrentAccount)):
+                return .allAccounts(refreshCurrentAccount: refreshCurrentAccount)
+            case (.allAccounts(let lhs), .allAccounts(let rhs)):
+                return .allAccounts(refreshCurrentAccount: lhs || rhs)
+            }
+        }
+    }
+
     private let store = ProfileStore()
     private lazy var vaultStore = VaultAccountStore(
         accountsRootURL: store.accountsRootURL,
@@ -91,7 +127,6 @@ final class AppController: NSObject, NSMenuDelegate {
     private let launchAtLoginManager = LaunchAtLoginManager()
     private let statusItemRenderer = StatusItemRenderer()
     private let desktopController = CodexDesktopController()
-    private let threadSyncInspector = LocalThreadSyncInspector()
     private let statusEvaluator = StatusEvaluator()
     private let apiAccountPromptController = APIAccountPromptController()
     private lazy var currentSnapshotFetcher = CurrentSnapshotFetcher(
@@ -184,10 +219,12 @@ final class AppController: NSObject, NSMenuDelegate {
     private var loadWarningNotice: String?
     private var localizationNotice: MenuNotice?
     private var refreshState = RefreshRequestState()
+    private var pendingRefreshIntent: ProfileRefreshIntent?
     private var isLaunchingSessionManager = false
     private var foregroundOperationState = ForegroundOperationState()
     private var lastRefreshAt: Date?
     private var refreshTimer: Timer?
+    private var cachedThreadSyncStatus: LocalThreadSyncStatus?
     private let settingsWindowCoordinator = SettingsWindowCoordinator()
     private var menuTrackingGate = MenuTrackingGate()
     private var pendingMenuRefreshReason: String?
@@ -215,16 +252,13 @@ final class AppController: NSObject, NSMenuDelegate {
         refreshVaultProfiles(currentRuntimeMaterial: currentRuntimeMaterial, scheduleQuotaRefresh: false)
         applySettingsSideEffects(showErrorsInStatus: false)
         rebuildMenu()
-        refreshAllProfiles()
+        refreshCurrentProfileOnly()
     }
 
     func menuWillOpen(_ menu: NSMenu) {
         refreshTimeSensitivePresentationState(now: Date())
         menuTrackingGate.beginTracking()
-        guard shouldAutoRefreshWhenMenuOpens(settings.refreshIntervalPreset) else {
-            return
-        }
-        refreshAllProfiles()
+        refreshSavedAccountsOnMenuOpen()
     }
 
     func menuDidClose(_ menu: NSMenu) {
@@ -307,52 +341,87 @@ final class AppController: NSObject, NSMenuDelegate {
 
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.refreshAllProfiles()
+                self?.refreshCurrentProfileOnly()
             }
         }
         refreshTimer = timer
         RunLoop.main.add(timer, forMode: .common)
     }
 
-    private func refreshAllProfiles() {
-        guard refreshState.begin() else { return }
+    private func refreshCurrentProfileOnly() {
+        performProfileRefresh(.currentOnly)
+    }
 
-        currentError = nil
-        currentHealthStatus = currentSnapshot == nil ? nil : .healthy
+    private func refreshSavedAccountsOnMenuOpen() {
+        performProfileRefresh(
+            .allAccounts(
+                refreshCurrentAccount: shouldAutoRefreshWhenMenuOpens(settings.refreshIntervalPreset)
+            )
+        )
+    }
+
+    private func refreshAllProfiles() {
+        performProfileRefresh(.allAccounts(refreshCurrentAccount: true))
+    }
+
+    private func performProfileRefresh(_ intent: ProfileRefreshIntent) {
+        guard refreshState.begin() else {
+            pendingRefreshIntent = pendingRefreshIntent?.merged(with: intent) ?? intent
+            return
+        }
+        pendingRefreshIntent = nil
+
+        if intent.shouldRefreshCurrentAccount {
+            currentError = nil
+            currentHealthStatus = currentSnapshot == nil ? nil : .healthy
+        }
         updateStatusTitle()
         rebuildMenu(reason: "refresh-begin")
 
         Task {
             defer {
+                let nextIntent = pendingRefreshIntent
+                pendingRefreshIntent = nil
                 let shouldRefreshAgain = refreshState.finish()
                 updateStatusTitle()
                 rebuildMenu(reason: "refresh-end")
                 if shouldRefreshAgain {
-                    refreshAllProfiles()
+                    performProfileRefresh(nextIntent ?? intent)
                 }
             }
 
             let currentRuntimeMaterial = try? store.currentRuntimeMaterial()
 
-            do {
-                currentSnapshot = try await currentSnapshotFetcher.fetch(
-                    currentRuntimeMaterial: currentRuntimeMaterial,
-                    codexHomeURL: store.currentAuthURL.deletingLastPathComponent()
-                )
-                currentHealthStatus = .healthy
-            } catch {
-                currentSnapshot = nil
-                currentHealthStatus = classifyProfileHealth(from: error)
-                currentError = userFacingMessage(for: error)
+            if intent.shouldRefreshCurrentAccount {
+                do {
+                    currentSnapshot = try await currentSnapshotFetcher.fetch(
+                        currentRuntimeMaterial: currentRuntimeMaterial,
+                        codexHomeURL: store.currentAuthURL.deletingLastPathComponent()
+                    )
+                    currentHealthStatus = .healthy
+                } catch {
+                    currentSnapshot = nil
+                    currentHealthStatus = classifyProfileHealth(from: error)
+                    currentError = userFacingMessage(for: error)
+                }
+
+                lastRefreshAt = Date()
+                currentProviderProfile = makeCurrentProviderProfile(currentRuntimeMaterial: currentRuntimeMaterial)
+                invalidateCachedThreadSyncStatusIfNeeded()
+                bootstrapVaultAccounts(currentRuntimeMaterial: currentRuntimeMaterial)
+                updateStatusTitle()
+                rebuildMenu(reason: "refresh-current")
+            } else {
+                currentProviderProfile = makeCurrentProviderProfile(currentRuntimeMaterial: currentRuntimeMaterial)
+                invalidateCachedThreadSyncStatusIfNeeded()
             }
 
-            lastRefreshAt = Date()
-            currentProviderProfile = makeCurrentProviderProfile(currentRuntimeMaterial: currentRuntimeMaterial)
-            bootstrapVaultAccounts(currentRuntimeMaterial: currentRuntimeMaterial)
-            updateStatusTitle()
-            rebuildMenu(reason: "refresh-current")
-
-            refreshVaultProfiles(currentRuntimeMaterial: currentRuntimeMaterial, scheduleQuotaRefresh: true)
+            refreshVaultProfiles(
+                currentRuntimeMaterial: currentRuntimeMaterial,
+                scheduleQuotaRefresh: true,
+                refreshScope: intent.quotaRefreshScope,
+                reloadSnapshot: intent.shouldRefreshCurrentAccount
+            )
         }
     }
 
@@ -593,15 +662,11 @@ final class AppController: NSObject, NSMenuDelegate {
 
     private func refreshSafeSwitchCenterState() {
         let latestRestorePoint = try? backupManager.latestRestorePoint()
-        let threadSyncStatus = threadSyncInspector.inspect(
-            store: store,
-            expectedProviderID: currentExpectedProviderID
-        )
         safeSwitchCenterState = statusEvaluator.currentState(
             currentProfile: currentProviderProfile,
             availableTargets: availableSwitchTargets,
             codexIsRunning: desktopController.isRunning,
-            localThreadSyncStatus: threadSyncStatus,
+            localThreadSyncStatus: cachedThreadSyncStatus ?? defaultThreadSyncStatus(),
             latestRestorePoint: latestRestorePoint
         )
     }
@@ -934,6 +999,10 @@ final class AppController: NSObject, NSMenuDelegate {
                     ),
                     lifetime: .timed(4)
                 )
+                self.cachedThreadSyncStatus = .healthy(
+                    expectedProvider: targetProfile.threadProviderID
+                        ?? (targetProfile.authMode == .chatgpt ? "openai" : targetProfile.providerID)
+                )
             } catch {
                 self.presentSafeSwitchNotice(
                     self.localizedErrorNotice(
@@ -983,6 +1052,7 @@ final class AppController: NSObject, NSMenuDelegate {
                     ),
                     lifetime: .timed(4)
                 )
+                self.cachedThreadSyncStatus = .healthy(expectedProvider: self.currentExpectedProviderID)
             } catch {
                 self.presentSafeSwitchNotice(
                     self.localizedErrorNotice(
@@ -1035,6 +1105,7 @@ final class AppController: NSObject, NSMenuDelegate {
                     ),
                     lifetime: .timed(4)
                 )
+                self.cachedThreadSyncStatus = nil
             } catch {
                 self.presentSafeSwitchNotice(
                     self.localizedErrorNotice(
@@ -1251,47 +1322,29 @@ final class AppController: NSObject, NSMenuDelegate {
 
     private func refreshVaultProfiles(
         currentRuntimeMaterial: ProfileRuntimeMaterial?,
-        scheduleQuotaRefresh: Bool
+        scheduleQuotaRefresh: Bool,
+        refreshScope: VaultQuotaRefreshCoordinator.RefreshScope = .allAccounts,
+        reloadSnapshot: Bool = true
     ) {
-        do {
-            let snapshot = try vaultStore.loadSnapshot()
-            vaultSnapshot = snapshot
-
-            let builtProfiles = snapshot.accounts.map { record in
-                let quotaRecord = vaultQuotaRecords[record.id]
-                return buildProviderProfile(
-                    id: record.id,
-                    fallbackDisplayName: record.metadata.displayName,
-                    source: .vault,
-                    runtimeMaterial: record.runtimeMaterial,
-                    snapshot: quotaRecord?.snapshot,
-                    healthStatus: quotaRecord?.healthStatus ?? .healthy,
-                    errorMessage: quotaRecord?.errorSummary,
-                    isCurrent: runtimeMatches(record.runtimeMaterial, currentRuntimeMaterial),
-                    managedFileURLs: [store.settingsURL, store.accountsIndexURL] + record.protectedFileURLs,
-                    lastUsedAt: record.metadata.lastUsedAt,
-                    quotaFetchedAt: quotaRecord?.fetchedAt
+        if reloadSnapshot || vaultSnapshot == nil {
+            do {
+                vaultSnapshot = try vaultStore.loadSnapshot()
+            } catch {
+                vaultSnapshot = nil
+                vaultProfiles = []
+                availableSwitchTargets = []
+                presentSafeSwitchNotice(
+                    localizedErrorNotice(
+                        en: "Failed to read saved accounts",
+                        zh: "读取已保存账号失败",
+                        error: error
+                    ),
+                    lifetime: .persistent
                 )
             }
-
-            vaultProfiles = sortProviderProfiles(builtProfiles)
-            availableSwitchTargets = sortProviderProfiles(
-                builtProfiles.filter { !runtimeMatches($0.runtimeMaterial, currentRuntimeMaterial) }
-            )
-        } catch {
-            vaultSnapshot = nil
-            vaultProfiles = []
-            availableSwitchTargets = []
-            presentSafeSwitchNotice(
-                localizedErrorNotice(
-                    en: "Failed to read saved accounts",
-                    zh: "读取已保存账号失败",
-                    error: error
-                ),
-                lifetime: .persistent
-            )
         }
 
+        rebuildVaultPresentation(currentRuntimeMaterial: currentRuntimeMaterial)
         applyVaultPresentationStateUpdates()
 
         guard scheduleQuotaRefresh, let vaultSnapshot else {
@@ -1302,7 +1355,8 @@ final class AppController: NSObject, NSMenuDelegate {
             .init(
                 currentProfile: currentProviderProfile,
                 vaultAccounts: vaultSnapshot.accounts,
-                cachedRecords: Array(vaultQuotaRecords.values)
+                cachedRecords: Array(vaultQuotaRecords.values),
+                refreshScope: refreshScope
             )
         ) { [weak self] records in
             guard let self else { return }
@@ -1344,11 +1398,73 @@ final class AppController: NSObject, NSMenuDelegate {
             self?.pendingVaultPresentationRefresh = nil
             self?.refreshVaultProfiles(
                 currentRuntimeMaterial: currentRuntimeMaterial,
-                scheduleQuotaRefresh: false
+                scheduleQuotaRefresh: false,
+                reloadSnapshot: false
             )
         }
         pendingVaultPresentationRefresh = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func rebuildVaultPresentation(currentRuntimeMaterial: ProfileRuntimeMaterial?) {
+        guard let snapshot = vaultSnapshot else {
+            vaultProfiles = []
+            availableSwitchTargets = []
+            return
+        }
+
+        let builtProfiles = snapshot.accounts.map { record in
+            let quotaRecord = vaultQuotaRecords[record.id]
+            return buildProviderProfile(
+                id: record.id,
+                fallbackDisplayName: record.metadata.displayName,
+                source: .vault,
+                runtimeMaterial: record.runtimeMaterial,
+                snapshot: quotaRecord?.snapshot,
+                healthStatus: quotaRecord?.healthStatus ?? .healthy,
+                errorMessage: quotaRecord?.errorSummary,
+                isCurrent: runtimeMatches(record.runtimeMaterial, currentRuntimeMaterial),
+                managedFileURLs: [store.settingsURL, store.accountsIndexURL] + record.protectedFileURLs,
+                lastUsedAt: record.metadata.lastUsedAt,
+                quotaFetchedAt: quotaRecord?.fetchedAt
+            )
+        }
+
+        vaultProfiles = sortProviderProfiles(builtProfiles)
+        availableSwitchTargets = sortProviderProfiles(
+            builtProfiles.filter { !runtimeMatches($0.runtimeMaterial, currentRuntimeMaterial) }
+        )
+    }
+
+    private func defaultThreadSyncStatus() -> LocalThreadSyncStatus {
+        .unavailable(
+            AppLocalization.localized(
+                en: "Open Session Manager and click Refresh to inspect local thread metadata.",
+                zh: "请打开 Session Manager 并点击刷新，以检查本地线程元数据。"
+            )
+        )
+    }
+
+    private func invalidateCachedThreadSyncStatusIfNeeded() {
+        guard cachedThreadSyncExpectedProviderID != currentExpectedProviderID else {
+            return
+        }
+        cachedThreadSyncStatus = nil
+    }
+
+    private var cachedThreadSyncExpectedProviderID: String? {
+        guard let cachedThreadSyncStatus else {
+            return nil
+        }
+
+        switch cachedThreadSyncStatus {
+        case .healthy(let expectedProvider):
+            return expectedProvider
+        case .repairNeeded(let expectedProvider, _, _):
+            return expectedProvider
+        case .unavailable:
+            return nil
+        }
     }
 
     private func refreshQuotaOverviewState(now: Date = Date()) {

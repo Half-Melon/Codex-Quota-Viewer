@@ -73,13 +73,12 @@ final class RolloutProviderSynchronizer {
     }
 
     func sessionMetaProvider(in fileURL: URL) throws -> String? {
-        let content = try String(contentsOf: fileURL, encoding: .utf8)
-        guard let line = content.split(separator: "\n", omittingEmptySubsequences: false).first,
-              !line.isEmpty else {
+        guard let firstLine = try readFirstLine(in: fileURL),
+              !firstLine.isEmpty else {
             return nil
         }
 
-        guard let object = try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+        guard let object = try JSONSerialization.jsonObject(with: Data(firstLine.utf8)) as? [String: Any],
               let payload = object["payload"] as? [String: Any] else {
             return nil
         }
@@ -116,9 +115,7 @@ final class RolloutProviderSynchronizer {
         for fileURL: URL,
         targetProvider: String
     ) throws -> Data? {
-        let content = try String(contentsOf: fileURL, encoding: .utf8)
-        let lines = content.components(separatedBy: "\n")
-        guard let firstLine = lines.first,
+        guard let firstLine = try readFirstLine(in: fileURL),
               !firstLine.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }
@@ -135,6 +132,9 @@ final class RolloutProviderSynchronizer {
             return nil
         }
 
+        let content = try String(contentsOf: fileURL, encoding: .utf8)
+        let lines = content.components(separatedBy: "\n")
+
         payload["model_provider"] = targetProvider
         object["payload"] = payload
 
@@ -143,6 +143,39 @@ final class RolloutProviderSynchronizer {
         var nextLines = lines
         nextLines[0] = firstLineString
         return Data(nextLines.joined(separator: "\n").utf8)
+    }
+
+    private func readFirstLine(in fileURL: URL) throws -> String? {
+        let handle = try FileHandle(forReadingFrom: fileURL)
+        defer {
+            try? handle.close()
+        }
+
+        var buffer = Data()
+
+        while true {
+            let chunk = try handle.read(upToCount: 4096) ?? Data()
+            if chunk.isEmpty {
+                break
+            }
+
+            if let newlineIndex = chunk.firstIndex(of: 0x0A) {
+                buffer.append(chunk.prefix(upTo: newlineIndex))
+                break
+            }
+
+            buffer.append(chunk)
+        }
+
+        if buffer.last == 0x0D {
+            buffer.removeLast()
+        }
+
+        guard !buffer.isEmpty else {
+            return nil
+        }
+
+        return String(data: buffer, encoding: .utf8)
     }
 }
 

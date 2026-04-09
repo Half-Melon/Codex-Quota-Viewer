@@ -260,6 +260,59 @@ describe("App", () => {
     expect(screen.getByRole("tab", { name: "活动" })).toBeInTheDocument();
   });
 
+  test("loads indexed sessions on first render without triggering a rescan", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input);
+
+      if (url === "/api/sessions?status=active") {
+        return jsonResponse({ sessions: [sessionAlpha, sessionBeta] });
+      }
+
+      if (url === "/api/sessions/rescan") {
+        throw new Error("Initial render should not rescan session files");
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    renderAppWithLocale();
+
+    expect(await screen.findByText("2 条索引")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/sessions?status=active");
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url) === "/api/sessions/rescan"),
+    ).toBe(false);
+  });
+
+  test("rescans sessions only when the refresh button is clicked", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+
+      if (url === "/api/sessions?status=active") {
+        return jsonResponse({ sessions: [sessionAlpha] });
+      }
+
+      if (url === "/api/sessions/rescan" && init?.method === "POST") {
+        return jsonResponse({ sessions: [sessionAlpha, sessionBeta] });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    renderAppWithLocale();
+
+    expect(await screen.findByText("1 条索引")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "刷新" }));
+
+    expect(await screen.findByText("2 条索引")).toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, init]) =>
+          String(url) === "/api/sessions/rescan" && init?.method === "POST",
+      ),
+    ).toBe(true);
+  });
+
   test("switches localized chrome without translating stored session content", async () => {
     const expectedEnglishTime = new Date(sessionAlpha.startedAt).toLocaleString("en-US", {
       month: "2-digit",
@@ -1067,7 +1120,7 @@ describe("App", () => {
     fetchMock.mockImplementation(async (input, init) => {
       const url = String(input);
 
-      if (url === "/api/sessions/rescan") {
+      if (url === "/api/sessions?status=active") {
         return jsonResponse({ sessions: [sessionAlpha, sessionBeta] });
       }
 
@@ -1127,7 +1180,7 @@ describe("App", () => {
     fetchMock.mockImplementation(async (input) => {
       const url = String(input);
 
-      if (url === "/api/sessions/rescan") {
+      if (url === "/api/sessions?status=active") {
         return jsonResponse({ sessions: [sessionAlpha, sessionBeta] });
       }
 
