@@ -2,7 +2,12 @@ English | [中文](README.zh-CN.md)
 
 # Codex Quota Viewer
 
-> Stable release: `1.0.0`
+> Stable release: `1.0.1`
+>
+> 1.0.1 update:
+> - Session Manager scans local sessions only when you click `Refresh`.
+> - Automatic refresh now targets only the current account; saved accounts refresh on menu-open with bounded concurrency.
+> - `.jsonl` provider checks now read only the first line, reducing menu-open stalls.
 
 Codex Quota Viewer is a native macOS menu bar app for people who use Codex and
 want everything in one place: current quota, saved accounts, safe account

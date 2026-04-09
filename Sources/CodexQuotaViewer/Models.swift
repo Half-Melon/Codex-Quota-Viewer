@@ -47,7 +47,7 @@ enum StatusItemStyle: String, Codable, CaseIterable {
     }
 }
 
-enum ProfileHealthStatus: String, Codable, Equatable {
+enum ProfileHealthStatus: String, Codable, Equatable, Sendable {
     case healthy
     case readFailure
     case needsLogin
@@ -143,19 +143,19 @@ struct AppSettings: Codable, Equatable {
     }
 }
 
-struct CodexSnapshot: Codable, Equatable {
+struct CodexSnapshot: Codable, Equatable, Sendable {
     let account: CodexAccount
     let rateLimits: RateLimitSnapshot
     let fetchedAt: Date
 }
 
-struct CodexAccount: Codable, Equatable {
+struct CodexAccount: Codable, Equatable, Sendable {
     let type: String
     let email: String?
     let planType: String?
 }
 
-struct RateLimitSnapshot: Codable, Equatable {
+struct RateLimitSnapshot: Codable, Equatable, Sendable {
     let limitId: String?
     let limitName: String?
     let primary: RateLimitWindow?
@@ -163,7 +163,7 @@ struct RateLimitSnapshot: Codable, Equatable {
     let planType: String?
 }
 
-struct RateLimitWindow: Codable, Equatable {
+struct RateLimitWindow: Codable, Equatable, Sendable {
     let usedPercent: Double
     let windowDurationMins: Int?
     let resetsAt: Int?

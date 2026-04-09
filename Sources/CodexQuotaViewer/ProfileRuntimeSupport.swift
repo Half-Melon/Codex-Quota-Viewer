@@ -1,12 +1,12 @@
 import CryptoKit
 import Foundation
 
-struct ProfileRuntimeMaterial: Equatable {
+struct ProfileRuntimeMaterial: Equatable, Sendable {
     let authData: Data
     let configData: Data?
 }
 
-enum CodexAuthMode: String, Codable, Equatable {
+enum CodexAuthMode: String, Codable, Equatable, Sendable {
     case chatgpt
     case apiKey
     case unknown

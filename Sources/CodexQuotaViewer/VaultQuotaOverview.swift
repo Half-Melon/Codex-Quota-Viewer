@@ -1,6 +1,6 @@
 import Foundation
 
-struct VaultQuotaSnapshotRecord: Codable, Equatable {
+struct VaultQuotaSnapshotRecord: Codable, Equatable, Sendable {
     let accountID: String
     let snapshot: CodexSnapshot?
     let healthStatus: ProfileHealthStatus
@@ -270,13 +270,46 @@ final class VaultQuotaRefreshCoordinator {
     typealias UpdateHandler = @MainActor ([VaultQuotaSnapshotRecord]) -> Void
     typealias CompletionHandler = @MainActor ([VaultQuotaSnapshotRecord]) -> Void
 
+    enum RefreshScope: String {
+        case currentOnly
+        case allAccounts
+    }
+
     struct Request {
         let currentProfile: ProviderProfile?
         let vaultAccounts: [VaultAccountRecord]
         let cachedRecords: [VaultQuotaSnapshotRecord]
+        let refreshScope: RefreshScope
+
+        init(
+            currentProfile: ProviderProfile?,
+            vaultAccounts: [VaultAccountRecord],
+            cachedRecords: [VaultQuotaSnapshotRecord],
+            refreshScope: RefreshScope = .allAccounts
+        ) {
+            self.currentProfile = currentProfile
+            self.vaultAccounts = vaultAccounts
+            self.cachedRecords = cachedRecords
+            self.refreshScope = refreshScope
+        }
     }
 
-    private let snapshotFetcher: SnapshotFetcher
+    private struct FetchTarget: Sendable {
+        let accountID: String
+        let runtimeMaterial: ProfileRuntimeMaterial
+        let authMode: CodexAuthMode
+    }
+
+    private final class SnapshotFetcherBox: @unchecked Sendable {
+        let fetch: SnapshotFetcher
+
+        init(fetch: @escaping SnapshotFetcher) {
+            self.fetch = fetch
+        }
+    }
+
+    private let snapshotFetcherBox: SnapshotFetcherBox
+    private let maxConcurrentChatGPTRefreshes: Int
     private var activeTask: Task<Void, Never>?
     private var activeRequest: Request?
     private var pendingRequest: Request?
@@ -284,8 +317,12 @@ final class VaultQuotaRefreshCoordinator {
     private var pendingCompletionHandler: CompletionHandler?
     private var pendingPresentationRefresh = DeferredPresentationRefreshState()
 
-    init(snapshotFetcher: @escaping SnapshotFetcher) {
-        self.snapshotFetcher = snapshotFetcher
+    init(
+        maxConcurrentChatGPTRefreshes: Int = 3,
+        snapshotFetcher: @escaping SnapshotFetcher
+    ) {
+        self.maxConcurrentChatGPTRefreshes = max(1, maxConcurrentChatGPTRefreshes)
+        snapshotFetcherBox = SnapshotFetcherBox(fetch: snapshotFetcher)
     }
 
     var isRefreshing: Bool {
@@ -349,6 +386,16 @@ final class VaultQuotaRefreshCoordinator {
             onUpdate(sortedQuotaRecords(recordsByID.values))
         }
 
+        guard request.refreshScope == .allAccounts else {
+            completeRefresh(
+                finalRecords: sortedQuotaRecords(recordsByID.values),
+                onUpdate: onUpdate,
+                onComplete: onComplete
+            )
+            return
+        }
+
+        let placeholderFetchedAt = Date()
         for record in request.vaultAccounts {
             if reusedCurrentAccountIDs.contains(record.id) {
                 continue
@@ -363,41 +410,71 @@ final class VaultQuotaRefreshCoordinator {
                         en: "Official quota unavailable",
                         zh: "官方额度不可用"
                     ),
-                    fetchedAt: now,
+                    fetchedAt: placeholderFetchedAt,
                     authMode: .apiKey,
                     isCurrent: false
                 )
                 onUpdate(sortedQuotaRecords(recordsByID.values))
-                continue
             }
-
-            do {
-                let snapshot = try await snapshotFetcher(record.runtimeMaterial)
-                recordsByID[record.id] = VaultQuotaSnapshotRecord(
-                    accountID: record.id,
-                    snapshot: snapshot,
-                    healthStatus: .healthy,
-                    errorSummary: nil,
-                    fetchedAt: snapshot.fetchedAt,
-                    authMode: .chatgpt,
-                    isCurrent: false
-                )
-            } catch {
-                recordsByID[record.id] = VaultQuotaSnapshotRecord(
-                    accountID: record.id,
-                    snapshot: nil,
-                    healthStatus: classifyProfileHealth(from: error),
-                    errorSummary: userFacingErrorMessage(error),
-                    fetchedAt: Date(),
-                    authMode: record.metadata.authMode,
-                    isCurrent: false
-                )
-            }
-
-            onUpdate(sortedQuotaRecords(recordsByID.values))
         }
 
-        let finalRecords = sortedQuotaRecords(recordsByID.values)
+        let chatGPTTargets = request.vaultAccounts.compactMap { record -> FetchTarget? in
+            guard !reusedCurrentAccountIDs.contains(record.id),
+                  record.metadata.authMode != .apiKey else {
+                return nil
+            }
+
+            return FetchTarget(
+                accountID: record.id,
+                runtimeMaterial: record.runtimeMaterial,
+                authMode: record.metadata.authMode
+            )
+        }
+
+        let snapshotFetcherBox = snapshotFetcherBox
+        var targetIterator = chatGPTTargets.makeIterator()
+        await withTaskGroup(of: VaultQuotaSnapshotRecord.self) { group in
+            for _ in 0..<min(maxConcurrentChatGPTRefreshes, chatGPTTargets.count) {
+                guard let target = targetIterator.next() else {
+                    break
+                }
+                group.addTask {
+                    await Self.fetchQuotaSnapshotRecord(
+                        for: target,
+                        using: snapshotFetcherBox
+                    )
+                }
+            }
+
+            while let record = await group.next() {
+                recordsByID[record.accountID] = record
+                onUpdate(sortedQuotaRecords(recordsByID.values))
+
+                guard let nextTarget = targetIterator.next() else {
+                    continue
+                }
+
+                group.addTask {
+                    await Self.fetchQuotaSnapshotRecord(
+                        for: nextTarget,
+                        using: snapshotFetcherBox
+                    )
+                }
+            }
+        }
+
+        completeRefresh(
+            finalRecords: sortedQuotaRecords(recordsByID.values),
+            onUpdate: onUpdate,
+            onComplete: onComplete
+        )
+    }
+
+    private func completeRefresh(
+        finalRecords: [VaultQuotaSnapshotRecord],
+        onUpdate: @escaping UpdateHandler,
+        onComplete: CompletionHandler?
+    ) {
         let hasPresentationOnlyFollowUp = pendingPresentationRefresh.takePendingRefresh()
         activeTask = nil
         activeRequest = nil
@@ -435,7 +512,35 @@ final class VaultQuotaRefreshCoordinator {
     private func requestScopeKey(_ request: Request) -> String {
         let currentID = request.currentProfile?.id ?? ""
         let accountIDs = request.vaultAccounts.map(\.id).sorted().joined(separator: "|")
-        return "\(currentID)::\(accountIDs)"
+        return "\(request.refreshScope.rawValue)::\(currentID)::\(accountIDs)"
+    }
+
+    nonisolated private static func fetchQuotaSnapshotRecord(
+        for target: FetchTarget,
+        using snapshotFetcherBox: SnapshotFetcherBox
+    ) async -> VaultQuotaSnapshotRecord {
+        do {
+            let snapshot = try await snapshotFetcherBox.fetch(target.runtimeMaterial)
+            return VaultQuotaSnapshotRecord(
+                accountID: target.accountID,
+                snapshot: snapshot,
+                healthStatus: .healthy,
+                errorSummary: nil,
+                fetchedAt: snapshot.fetchedAt,
+                authMode: .chatgpt,
+                isCurrent: false
+            )
+        } catch {
+            return VaultQuotaSnapshotRecord(
+                accountID: target.accountID,
+                snapshot: nil,
+                healthStatus: classifyProfileHealth(from: error),
+                errorSummary: userFacingErrorMessage(error),
+                fetchedAt: Date(),
+                authMode: target.authMode,
+                isCurrent: false
+            )
+        }
     }
 }
 

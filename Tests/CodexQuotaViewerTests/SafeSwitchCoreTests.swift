@@ -214,6 +214,42 @@ func rolloutProviderSynchronizerRewritesSessionMetaAcrossRoots() throws {
         #expect(try readSessionMetaProvider(from: archivedURL) == "openai")
     }
 
+@Test
+func rolloutProviderSynchronizerReadsProviderFromFirstLineOnly() throws {
+        let harness = try makeHarness()
+        let sessionsRoot = harness.codexHomeURL.appendingPathComponent("sessions", isDirectory: true)
+        let rolloutURL = try writeRolloutData(
+            under: sessionsRoot,
+            id: "binary-tail-provider",
+            provider: "openai",
+            trailingData: Data([0x0A, 0xFF, 0xFE, 0xFD])
+        )
+
+        let synchronizer = RolloutProviderSynchronizer()
+
+        #expect(try synchronizer.sessionMetaProvider(in: rolloutURL) == "openai")
+    }
+
+@Test
+func rolloutProviderSynchronizerSkipsWholeFileDecodeWhenProviderAlreadyMatchesTarget() throws {
+        let harness = try makeHarness()
+        let sessionsRoot = harness.codexHomeURL.appendingPathComponent("sessions", isDirectory: true)
+        _ = try writeRolloutData(
+            under: sessionsRoot,
+            id: "binary-tail-planned-update",
+            provider: "openai",
+            trailingData: Data([0x0A, 0xFF, 0xFE, 0xFD])
+        )
+
+        let synchronizer = RolloutProviderSynchronizer()
+        let planned = try synchronizer.plannedUpdates(
+            in: [sessionsRoot],
+            targetProvider: "openai"
+        )
+
+        #expect(planned.isEmpty)
+    }
+
 @MainActor
 @Test
 func switchOrchestratorAppliesRuntimeSynchronizesRolloutsAndRequestsRepair() async throws {
@@ -538,6 +574,19 @@ private func writeRollout(under root: URL, id: String, provider: String) throws 
     {"timestamp":"2026-03-31T00:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"hello"}}
     """
     try Data(text.utf8).write(to: fileURL, options: .atomic)
+    return fileURL
+}
+
+private func writeRolloutData(
+    under root: URL,
+    id: String,
+    provider: String,
+    trailingData: Data
+) throws -> URL {
+    let fileURL = try writeRollout(under: root, id: id, provider: provider)
+    var data = try Data(contentsOf: fileURL)
+    data.append(trailingData)
+    try data.write(to: fileURL, options: .atomic)
     return fileURL
 }
 
