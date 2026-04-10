@@ -29,12 +29,27 @@ enum CodexRPCError: LocalizedError, Equatable {
     }
 }
 
+protocol CodexRPCChanneling: Sendable {
+    func fetchSnapshot(timeout: TimeInterval) async throws -> CodexSnapshot
+    func invalidate() async
+}
+
+protocol CodexRPCChannelInvalidating: Sendable {
+    func invalidateAllReusableChannels() async
+    func invalidateReusableChannel(for runtimeMaterial: ProfileRuntimeMaterial) async
+}
+
 private struct AccountReadResponse: Decodable {
     let account: CodexAccount?
 }
 
 private struct RateLimitsReadResponse: Decodable {
     let rateLimits: RateLimitSnapshot
+}
+
+private struct TemporaryCodexRuntime {
+    let tempHomeURL: URL
+    let tempCodexHomeURL: URL
 }
 
 func fallbackRateLimitsSnapshot(
@@ -73,7 +88,391 @@ private func quotaUnavailableRateLimitsSnapshot() -> RateLimitSnapshot {
     )
 }
 
-struct CodexRPCClient: Sendable {
+actor CodexRPCChannelPool {
+    typealias ChannelFactory = @Sendable (ProfileRuntimeMaterial) async throws -> any CodexRPCChanneling
+
+    private struct Entry {
+        let channel: any CodexRPCChanneling
+        var expiresAt: Date
+    }
+
+    private let ttl: TimeInterval
+    private let channelFactory: ChannelFactory
+    private let nowProvider: @Sendable () -> Date
+    private var entries: [String: Entry] = [:]
+
+    init(
+        ttl: TimeInterval = 180,
+        nowProvider: @escaping @Sendable () -> Date = Date.init,
+        channelFactory: @escaping ChannelFactory
+    ) {
+        self.ttl = ttl
+        self.nowProvider = nowProvider
+        self.channelFactory = channelFactory
+    }
+
+    func fetchSnapshot(
+        runtimeMaterial: ProfileRuntimeMaterial,
+        timeout: TimeInterval
+    ) async throws -> CodexSnapshot {
+        await cleanupExpiredChannels()
+
+        let canonicalRuntime = canonicalRuntimeMaterialForStorage(runtimeMaterial)
+        let key = runtimeIdentityKey(for: canonicalRuntime)
+        let channel = try await reusableChannel(forKey: key, runtimeMaterial: canonicalRuntime)
+
+        do {
+            let snapshot = try await channel.fetchSnapshot(timeout: timeout)
+            entries[key]?.expiresAt = nowProvider().addingTimeInterval(ttl)
+            return snapshot
+        } catch {
+            await invalidateChannel(forKey: key)
+            throw error
+        }
+    }
+
+    func invalidateAll() async {
+        let channels = entries.values.map(\.channel)
+        entries.removeAll()
+        for channel in channels {
+            await channel.invalidate()
+        }
+    }
+
+    func invalidate(runtimeMaterial: ProfileRuntimeMaterial) async {
+        let canonicalRuntime = canonicalRuntimeMaterialForStorage(runtimeMaterial)
+        let key = runtimeIdentityKey(for: canonicalRuntime)
+        await invalidateChannel(forKey: key)
+    }
+
+    private func reusableChannel(
+        forKey key: String,
+        runtimeMaterial: ProfileRuntimeMaterial
+    ) async throws -> any CodexRPCChanneling {
+        if let existing = entries[key] {
+            return existing.channel
+        }
+
+        let channel = try await channelFactory(runtimeMaterial)
+        entries[key] = Entry(
+            channel: channel,
+            expiresAt: nowProvider().addingTimeInterval(ttl)
+        )
+        return channel
+    }
+
+    private func cleanupExpiredChannels() async {
+        let now = nowProvider()
+        let expiredKeys = entries.compactMap { key, entry in
+            entry.expiresAt <= now ? key : nil
+        }
+
+        for key in expiredKeys {
+            await invalidateChannel(forKey: key)
+        }
+    }
+
+    private func invalidateChannel(forKey key: String) async {
+        guard let entry = entries.removeValue(forKey: key) else {
+            return
+        }
+        await entry.channel.invalidate()
+    }
+}
+
+actor CodexRPCChannel: CodexRPCChanneling {
+    private let process: Process
+    private let inputHandle: FileHandle
+    private let outputHandle: FileHandle
+    private let stderrHandle: FileHandle
+    private let temporaryHomeURL: URL
+    private let decoder = JSONDecoder()
+    private var outputIterator: FileHandle.AsyncBytes.Iterator
+    private var bufferedOutput = Data()
+    private var nextRequestNumber = 0
+    private var isInitialized = false
+    private var isInvalidated = false
+
+    static func make(
+        runtimeMaterial: ProfileRuntimeMaterial,
+        fileManager: FileManager = .default
+    ) throws -> CodexRPCChannel {
+        let launch = try defaultLaunchConfiguration()
+        let runtime = try prepareTemporaryCodexRuntime(
+            authData: runtimeMaterial.authData,
+            configData: runtimeMaterial.configData,
+            fileManager: fileManager
+        )
+
+        let process = Process()
+        process.executableURL = launch.executableURL
+        process.arguments = launch.arguments
+
+        var environment = ProcessInfo.processInfo.environment
+        environment["HOME"] = runtime.tempHomeURL.path
+        environment["CODEX_HOME"] = runtime.tempCodexHomeURL.path
+        process.environment = environment
+
+        let stdin = Pipe()
+        let stdout = Pipe()
+        let stderr = Pipe()
+
+        process.standardInput = stdin
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        do {
+            try process.run()
+        } catch {
+            try? fileManager.removeItem(at: runtime.tempHomeURL)
+            throw error
+        }
+
+        return CodexRPCChannel(
+            process: process,
+            inputHandle: stdin.fileHandleForWriting,
+            outputHandle: stdout.fileHandleForReading,
+            stderrHandle: stderr.fileHandleForReading,
+            temporaryHomeURL: runtime.tempHomeURL
+        )
+    }
+
+    private init(
+        process: Process,
+        inputHandle: FileHandle,
+        outputHandle: FileHandle,
+        stderrHandle: FileHandle,
+        temporaryHomeURL: URL
+    ) {
+        self.process = process
+        self.inputHandle = inputHandle
+        self.outputHandle = outputHandle
+        self.stderrHandle = stderrHandle
+        self.temporaryHomeURL = temporaryHomeURL
+        outputIterator = outputHandle.bytes.makeAsyncIterator()
+    }
+
+    func fetchSnapshot(timeout: TimeInterval) async throws -> CodexSnapshot {
+        guard !isInvalidated else {
+            throw CodexRPCError.invalidResponse("app-server exited early.")
+        }
+
+        return try await withThrowingTaskGroup(of: CodexSnapshot.self) { group in
+            group.addTask {
+                try await self.fetchSnapshotUnsafe()
+            }
+
+            group.addTask {
+                try await sleepForTimeout(timeout)
+                await self.invalidate()
+                throw CodexRPCError.timeout
+            }
+
+            guard let result = try await group.next() else {
+                throw CodexRPCError.invalidResponse("No output was received.")
+            }
+
+            group.cancelAll()
+            return result
+        }
+    }
+
+    func invalidate() async {
+        if isInvalidated {
+            return
+        }
+
+        isInvalidated = true
+
+        if process.isRunning {
+            process.terminate()
+        }
+
+        try? inputHandle.close()
+        try? outputHandle.close()
+        try? stderrHandle.close()
+        try? FileManager.default.removeItem(at: temporaryHomeURL)
+    }
+
+    private func fetchSnapshotUnsafe() async throws -> CodexSnapshot {
+        try await ensureInitialized()
+
+        let accountRequestID = makeRequestID()
+        try sendRequest(
+            id: accountRequestID,
+            method: "account/read",
+            params: [:],
+            to: inputHandle
+        )
+        let accountMessage = try await readMessage(for: accountRequestID)
+        let account = try parseAccount(from: accountMessage)
+
+        if account.type == "apiKey" {
+            return CodexSnapshot(
+                account: account,
+                rateLimits: quotaUnavailableRateLimitsSnapshot(),
+                fetchedAt: Date()
+            )
+        }
+
+        let rateLimitsRequestID = makeRequestID()
+        try sendRequest(
+            id: rateLimitsRequestID,
+            method: "account/rateLimits/read",
+            params: [:],
+            to: inputHandle
+        )
+        let rateLimitsMessage = try await readMessage(for: rateLimitsRequestID)
+        let rateLimits = try parseRateLimits(
+            from: rateLimitsMessage,
+            requestID: rateLimitsRequestID
+        )
+
+        return CodexSnapshot(account: account, rateLimits: rateLimits, fetchedAt: Date())
+    }
+
+    private func ensureInitialized() async throws {
+        guard !isInitialized else {
+            return
+        }
+
+        let initializeRequestID = makeRequestID()
+        try sendRequest(
+            id: initializeRequestID,
+            method: "initialize",
+            params: [
+                "clientInfo": [
+                    "name": AppIdentity.rpcClientName,
+                    "version": AppIdentity.rpcClientVersion,
+                ],
+                "protocolVersion": 2,
+            ],
+            to: inputHandle
+        )
+        let initializeMessage = try await readMessage(for: initializeRequestID)
+        if let rpcError = rpcError(from: initializeMessage) {
+            throw rpcError
+        }
+        isInitialized = true
+    }
+
+    private func readMessage(for requestID: String) async throws -> [String: Any] {
+        while let line = try await nextOutputLine() {
+            if Task.isCancelled {
+                throw CancellationError()
+            }
+
+            guard !line.isEmpty else {
+                continue
+            }
+
+            let message = try decodeMessage(from: line)
+            guard let id = message["id"] as? String else {
+                continue
+            }
+
+            if id == requestID {
+                return message
+            }
+        }
+
+        throw try streamEndedError()
+    }
+
+    private func nextOutputLine() async throws -> String? {
+        while true {
+            if let newlineIndex = bufferedOutput.firstIndex(of: 0x0A) {
+                var lineData = bufferedOutput.prefix(upTo: newlineIndex)
+                bufferedOutput.removeSubrange(...newlineIndex)
+                if lineData.last == 0x0D {
+                    lineData.removeLast()
+                }
+                return String(data: lineData, encoding: .utf8)
+            }
+
+            var iterator = outputIterator
+            guard let nextByte = try await iterator.next() else {
+                outputIterator = iterator
+                guard !bufferedOutput.isEmpty else {
+                    return nil
+                }
+
+                let lineData = bufferedOutput
+                bufferedOutput.removeAll(keepingCapacity: true)
+                return String(data: lineData, encoding: .utf8)
+            }
+
+            outputIterator = iterator
+            bufferedOutput.append(nextByte)
+        }
+    }
+
+    private func parseAccount(from message: [String: Any]) throws -> CodexAccount {
+        if let rpcError = rpcError(from: message) {
+            throw rpcError
+        }
+
+        guard let resultObject = message["result"] else {
+            throw CodexRPCError.invalidResponse("account/read is missing result.")
+        }
+
+        let data = try JSONSerialization.data(withJSONObject: resultObject)
+        let result = try decoder.decode(AccountReadResponse.self, from: data)
+        guard let account = result.account else {
+            throw CodexRPCError.notLoggedIn
+        }
+        return account
+    }
+
+    private func parseRateLimits(
+        from message: [String: Any],
+        requestID: String
+    ) throws -> RateLimitSnapshot {
+        if let errorInfo = rpcErrorInfo(from: message) {
+            if let fallback = fallbackRateLimitsSnapshot(
+                requestID: requestID,
+                errorCode: errorInfo.code,
+                message: errorInfo.message
+            ) {
+                return fallback
+            }
+            throw mapRPCError(code: errorInfo.code, detail: errorInfo.message)
+        }
+
+        guard let resultObject = message["result"] else {
+            throw CodexRPCError.invalidResponse("account/rateLimits/read is missing result.")
+        }
+
+        let data = try JSONSerialization.data(withJSONObject: resultObject)
+        let result = try decoder.decode(RateLimitsReadResponse.self, from: data)
+        return result.rateLimits
+    }
+
+    private func streamEndedError() throws -> CodexRPCError {
+        let stderrText = try readPipeText(from: stderrHandle)
+        if let failureError = codexProcessFailureError(
+            terminationStatus: process.terminationStatus,
+            stderrText: stderrText
+        ) {
+            return failureError
+        }
+
+        return CodexRPCError.invalidResponse("app-server exited early.")
+    }
+
+    private func makeRequestID() -> String {
+        nextRequestNumber += 1
+        return String(nextRequestNumber)
+    }
+}
+
+struct CodexRPCClient: Sendable, CodexRPCChannelInvalidating {
+    private let channelPool: CodexRPCChannelPool
+
+    init(channelPool: CodexRPCChannelPool = CodexRPCClient.makeDefaultChannelPool()) {
+        self.channelPool = channelPool
+    }
+
     func fetchSnapshot(codexHomeURL: URL) async throws -> CodexSnapshot {
         let homeURL = codexHomeURL.deletingLastPathComponent()
         return try await fetchSnapshot(
@@ -84,39 +483,49 @@ struct CodexRPCClient: Sendable {
 
     func fetchSnapshot(authData: Data, configData: Data? = nil) async throws -> CodexSnapshot {
         let fileManager = FileManager.default
-        let tempHome = fileManager.temporaryDirectory
-            .appendingPathComponent("\(AppIdentity.temporaryDirectoryPrefix)-\(UUID().uuidString)", isDirectory: true)
-        let tempCodexHome = tempHome.appendingPathComponent(".codex", isDirectory: true)
-
-        try fileManager.createDirectory(
-            at: tempCodexHome,
-            withIntermediateDirectories: true,
-            attributes: nil
+        let runtime = try prepareTemporaryCodexRuntime(
+            authData: authData,
+            configData: configData,
+            fileManager: fileManager
         )
 
-        let authURL = tempCodexHome.appendingPathComponent("auth.json", isDirectory: false)
-        try authData.write(to: authURL, options: .atomic)
-
-        if let configData {
-            let configURL = tempCodexHome.appendingPathComponent("config.toml", isDirectory: false)
-            try configData.write(to: configURL, options: .atomic)
-        }
-
         defer {
-            try? fileManager.removeItem(at: tempHome)
+            try? fileManager.removeItem(at: runtime.tempHomeURL)
         }
 
         return try await fetchSnapshot(
-            homeOverride: tempHome,
-            codexHomeOverride: tempCodexHome
+            homeOverride: runtime.tempHomeURL,
+            codexHomeOverride: runtime.tempCodexHomeURL
         )
+    }
+
+    func fetchSavedAccountSnapshot(
+        authData: Data,
+        configData: Data? = nil,
+        timeout: TimeInterval
+    ) async throws -> CodexSnapshot {
+        let runtimeMaterial = canonicalRuntimeMaterialForStorage(
+            ProfileRuntimeMaterial(authData: authData, configData: configData)
+        )
+        return try await channelPool.fetchSnapshot(
+            runtimeMaterial: runtimeMaterial,
+            timeout: timeout
+        )
+    }
+
+    func invalidateAllReusableChannels() async {
+        await channelPool.invalidateAll()
+    }
+
+    func invalidateReusableChannel(for runtimeMaterial: ProfileRuntimeMaterial) async {
+        await channelPool.invalidate(runtimeMaterial: runtimeMaterial)
     }
 
     private func fetchSnapshot(
         homeOverride: URL?,
         codexHomeOverride: URL?
     ) async throws -> CodexSnapshot {
-        let launch = try launchConfiguration()
+        let launch = try defaultLaunchConfiguration()
 
         let process = Process()
         process.executableURL = launch.executableURL
@@ -162,7 +571,7 @@ struct CodexRPCClient: Sendable {
             }
 
             group.addTask {
-                try await Task.sleep(for: .seconds(10))
+                try await sleepForTimeout(10)
                 if process.isRunning {
                     process.terminate()
                 }
@@ -208,13 +617,11 @@ struct CodexRPCClient: Sendable {
             let message = try decodeMessage(from: line)
             let id = message["id"] as? String
 
-            if let error = message["error"] as? [String: Any] {
-                let code = error["code"] as? Int ?? 0
-                let detail = error["message"] as? String ?? "Unknown error"
+            if let errorInfo = rpcErrorInfo(from: message) {
                 if let fallback = fallbackRateLimitsSnapshot(
                     requestID: id,
-                    errorCode: code,
-                    message: detail
+                    errorCode: errorInfo.code,
+                    message: errorInfo.message
                 ) {
                     rateLimits = fallback
                     if let account {
@@ -222,10 +629,7 @@ struct CodexRPCClient: Sendable {
                     }
                     continue
                 }
-                if code == -32600 {
-                    throw CodexRPCError.notLoggedIn
-                }
-                throw CodexRPCError.rpc(detail)
+                throw mapRPCError(code: errorInfo.code, detail: errorInfo.message)
             }
 
             guard let id else { continue }
@@ -282,50 +686,118 @@ struct CodexRPCClient: Sendable {
         throw CodexRPCError.invalidResponse("app-server exited early.")
     }
 
-    private func sendRequest(
-        id: String,
-        method: String,
-        params: [String: Any],
-        to handle: FileHandle
-    ) throws {
-        let body: [String: Any] = [
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        ]
-
-        let data = try JSONSerialization.data(withJSONObject: body)
-        try handle.write(contentsOf: data)
-        try handle.write(contentsOf: Data([0x0A]))
-    }
-
-    private func decodeMessage(from line: String) throws -> [String: Any] {
-        let data = Data(line.utf8)
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw CodexRPCError.invalidResponse(line)
+    private static func makeDefaultChannelPool() -> CodexRPCChannelPool {
+        CodexRPCChannelPool { runtimeMaterial in
+            try CodexRPCChannel.make(runtimeMaterial: runtimeMaterial)
         }
-        return object
+    }
+}
+
+private func prepareTemporaryCodexRuntime(
+    authData: Data,
+    configData: Data?,
+    fileManager: FileManager
+) throws -> TemporaryCodexRuntime {
+    let tempHomeURL = fileManager.temporaryDirectory
+        .appendingPathComponent("\(AppIdentity.temporaryDirectoryPrefix)-\(UUID().uuidString)", isDirectory: true)
+    let tempCodexHomeURL = tempHomeURL.appendingPathComponent(".codex", isDirectory: true)
+
+    try fileManager.createDirectory(
+        at: tempCodexHomeURL,
+        withIntermediateDirectories: true,
+        attributes: nil
+    )
+
+    let authURL = tempCodexHomeURL.appendingPathComponent("auth.json", isDirectory: false)
+    try authData.write(to: authURL, options: .atomic)
+
+    if let configData {
+        let configURL = tempCodexHomeURL.appendingPathComponent("config.toml", isDirectory: false)
+        try configData.write(to: configURL, options: .atomic)
     }
 
-    private func readPipeText(from handle: FileHandle) throws -> String {
-        let data = handle.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    }
+    return TemporaryCodexRuntime(
+        tempHomeURL: tempHomeURL,
+        tempCodexHomeURL: tempCodexHomeURL
+    )
+}
 
-    private func launchConfiguration() throws -> (executableURL: URL, arguments: [String]) {
-        if let launchConfiguration = resolveCodexCLIConfiguration() {
-            return (
-                launchConfiguration.executableURL,
-                launchConfiguration.arguments(
-                    appending: ["-s", "read-only", "-a", "untrusted", "app-server"]
-                )
+private func defaultLaunchConfiguration() throws -> (executableURL: URL, arguments: [String]) {
+    if let launchConfiguration = resolveCodexCLIConfiguration() {
+        return (
+            launchConfiguration.executableURL,
+            launchConfiguration.arguments(
+                appending: ["-s", "read-only", "-a", "untrusted", "app-server"]
             )
-        }
-
-        throw CodexRPCError.missingExecutable
+        )
     }
+
+    throw CodexRPCError.missingExecutable
+}
+
+private func rpcErrorInfo(
+    from message: [String: Any]
+) -> (code: Int, message: String)? {
+    guard let error = message["error"] as? [String: Any] else {
+        return nil
+    }
+
+    return (
+        code: error["code"] as? Int ?? 0,
+        message: error["message"] as? String ?? "Unknown error"
+    )
+}
+
+private func rpcError(from message: [String: Any]) -> CodexRPCError? {
+    guard let errorInfo = rpcErrorInfo(from: message) else {
+        return nil
+    }
+
+    return mapRPCError(code: errorInfo.code, detail: errorInfo.message)
+}
+
+private func mapRPCError(code: Int, detail: String) -> CodexRPCError {
+    if code == -32600 {
+        return .notLoggedIn
+    }
+    return .rpc(detail)
+}
+
+private func sendRequest(
+    id: String,
+    method: String,
+    params: [String: Any],
+    to handle: FileHandle
+) throws {
+    let body: [String: Any] = [
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": method,
+        "params": params,
+    ]
+
+    let data = try JSONSerialization.data(withJSONObject: body)
+    try handle.write(contentsOf: data)
+    try handle.write(contentsOf: Data([0x0A]))
+}
+
+private func decodeMessage(from line: String) throws -> [String: Any] {
+    let data = Data(line.utf8)
+    guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        throw CodexRPCError.invalidResponse(line)
+    }
+    return object
+}
+
+private func readPipeText(from handle: FileHandle) throws -> String {
+    let data = handle.readDataToEndOfFile()
+    return String(data: data, encoding: .utf8)?
+        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+}
+
+private func sleepForTimeout(_ timeout: TimeInterval) async throws {
+    let nanoseconds = UInt64(max(timeout, 0) * 1_000_000_000)
+    try await Task.sleep(nanoseconds: nanoseconds)
 }
 
 func codexProcessFailureError(

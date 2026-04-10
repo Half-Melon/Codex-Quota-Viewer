@@ -19,6 +19,7 @@ struct ProviderProfile: Equatable, Identifiable {
     let snapshot: CodexSnapshot?
     let healthStatus: ProfileHealthStatus
     let errorMessage: String?
+    let quotaFailureDisposition: QuotaFailureDisposition?
     let isCurrent: Bool
     let managedFileURLs: [URL]
     let lastUsedAt: Date?
@@ -38,6 +39,7 @@ struct ProviderProfile: Equatable, Identifiable {
         snapshot: CodexSnapshot?,
         healthStatus: ProfileHealthStatus,
         errorMessage: String?,
+        quotaFailureDisposition: QuotaFailureDisposition? = nil,
         isCurrent: Bool,
         managedFileURLs: [URL] = [],
         lastUsedAt: Date? = nil,
@@ -56,6 +58,7 @@ struct ProviderProfile: Equatable, Identifiable {
         self.snapshot = snapshot
         self.healthStatus = healthStatus
         self.errorMessage = errorMessage
+        self.quotaFailureDisposition = quotaFailureDisposition
         self.isCurrent = isCurrent
         self.managedFileURLs = managedFileURLs
         self.lastUsedAt = lastUsedAt
@@ -98,6 +101,7 @@ func buildProviderProfile(
     snapshot: CodexSnapshot?,
     healthStatus: ProfileHealthStatus,
     errorMessage: String?,
+    quotaFailureDisposition: QuotaFailureDisposition? = nil,
     isCurrent: Bool,
     managedFileURLs: [URL] = [],
     lastUsedAt: Date? = nil,
@@ -128,6 +132,7 @@ func buildProviderProfile(
         snapshot: snapshot,
         healthStatus: healthStatus,
         errorMessage: errorMessage,
+        quotaFailureDisposition: quotaFailureDisposition,
         isCurrent: isCurrent,
         managedFileURLs: managedFileURLs,
         lastUsedAt: lastUsedAt,

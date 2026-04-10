@@ -104,6 +104,7 @@ func makeTestProviderProfile(
     lastUsedAt: Date? = nil,
     healthStatus: ProfileHealthStatus = .healthy,
     errorMessage: String? = nil,
+    quotaFailureDisposition: QuotaFailureDisposition? = nil,
     runtimeMaterial: ProfileRuntimeMaterial? = nil,
     quotaFetchedAt: Date? = nil
 ) -> ProviderProfile {
@@ -122,6 +123,7 @@ func makeTestProviderProfile(
         snapshot: snapshot,
         healthStatus: healthStatus,
         errorMessage: errorMessage,
+        quotaFailureDisposition: quotaFailureDisposition,
         isCurrent: isCurrent,
         managedFileURLs: [],
         lastUsedAt: lastUsedAt,

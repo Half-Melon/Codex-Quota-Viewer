@@ -71,6 +71,11 @@ enum ProfileHealthStatus: String, Codable, Equatable, Sendable {
     }
 }
 
+enum QuotaFailureDisposition: String, Codable, Equatable, Sendable {
+    case transient
+    case terminal
+}
+
 struct AppSettings: Codable, Equatable {
     var refreshIntervalPreset: RefreshIntervalPreset
     var launchAtLoginEnabled: Bool
@@ -288,4 +293,30 @@ func classifyProfileHealth(from error: Error) -> ProfileHealthStatus {
     }
 
     return .readFailure
+}
+
+func classifyQuotaFailureDisposition(from error: Error) -> QuotaFailureDisposition? {
+    guard classifyProfileHealth(from: error) == .readFailure else {
+        return nil
+    }
+
+    if let rpcError = error as? CodexRPCError {
+        switch rpcError {
+        case .timeout:
+            return .transient
+        case .rpc(let message):
+            let lowered = message.lowercased()
+            if lowered.contains("app-server failed to start")
+                || lowered.contains("app-server exited early") {
+                return .transient
+            }
+            return .terminal
+        case .missingExecutable, .invalidResponse:
+            return .terminal
+        case .notLoggedIn:
+            return nil
+        }
+    }
+
+    return .terminal
 }

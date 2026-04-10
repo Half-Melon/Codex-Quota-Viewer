@@ -84,23 +84,30 @@ func resolveProfileIndicatorKind(
 final class AppController: NSObject, NSMenuDelegate {
     private enum ProfileRefreshIntent: Equatable {
         case currentOnly
-        case allAccounts(refreshCurrentAccount: Bool)
+        case menuOpenSelective(refreshCurrentAccount: Bool)
+        case manualFull
 
         var shouldRefreshCurrentAccount: Bool {
             switch self {
             case .currentOnly:
                 return true
-            case .allAccounts(let refreshCurrentAccount):
+            case .menuOpenSelective(let refreshCurrentAccount):
                 return refreshCurrentAccount
+            case .manualFull:
+                return true
             }
         }
 
-        var quotaRefreshScope: VaultQuotaRefreshCoordinator.RefreshScope {
+        func refreshPolicy(
+            refreshIntervalPreset: RefreshIntervalPreset
+        ) -> VaultQuotaRefreshCoordinator.RefreshPolicy {
             switch self {
             case .currentOnly:
                 return .currentOnly
-            case .allAccounts:
-                return .allAccounts
+            case .menuOpenSelective:
+                return .menuOpenSelective(staleAfter: staleThreshold(for: refreshIntervalPreset))
+            case .manualFull:
+                return .manualFull
             }
         }
 
@@ -108,12 +115,14 @@ final class AppController: NSObject, NSMenuDelegate {
             switch (self, other) {
             case (.currentOnly, .currentOnly):
                 return .currentOnly
-            case (.allAccounts(let refreshCurrentAccount), .currentOnly):
-                return .allAccounts(refreshCurrentAccount: refreshCurrentAccount)
-            case (.currentOnly, .allAccounts(let refreshCurrentAccount)):
-                return .allAccounts(refreshCurrentAccount: refreshCurrentAccount)
-            case (.allAccounts(let lhs), .allAccounts(let rhs)):
-                return .allAccounts(refreshCurrentAccount: lhs || rhs)
+            case (.manualFull, _), (_, .manualFull):
+                return .manualFull
+            case (.menuOpenSelective(let refreshCurrentAccount), .currentOnly):
+                return .menuOpenSelective(refreshCurrentAccount: refreshCurrentAccount)
+            case (.currentOnly, .menuOpenSelective(let refreshCurrentAccount)):
+                return .menuOpenSelective(refreshCurrentAccount: refreshCurrentAccount)
+            case (.menuOpenSelective(let lhs), .menuOpenSelective(let rhs)):
+                return .menuOpenSelective(refreshCurrentAccount: lhs || rhs)
             }
         }
     }
@@ -150,11 +159,13 @@ final class AppController: NSObject, NSMenuDelegate {
         backupManager: backupManager,
         rolloutSynchronizer: RolloutProviderSynchronizer(),
         repairClient: repairClient,
-        desktopController: desktopController
+        desktopController: desktopController,
+        quotaChannelInvalidator: rpcClient
     )
     private lazy var rollbackManager = RollbackManager(
         backupManager: backupManager,
-        desktopController: desktopController
+        desktopController: desktopController,
+        quotaChannelInvalidator: rpcClient
     )
     private lazy var accountOnboardingCoordinator = AccountOnboardingCoordinator(
         vaultStore: vaultStore,
@@ -182,10 +193,11 @@ final class AppController: NSObject, NSMenuDelegate {
         }
     )
     private lazy var quotaRefreshCoordinator = VaultQuotaRefreshCoordinator(
-        snapshotFetcher: { [rpcClient] runtimeMaterial in
-            try await rpcClient.fetchSnapshot(
+        snapshotFetcher: { [rpcClient] runtimeMaterial, timeout in
+            try await rpcClient.fetchSavedAccountSnapshot(
                 authData: runtimeMaterial.authData,
-                configData: runtimeMaterial.configData
+                configData: runtimeMaterial.configData,
+                timeout: timeout
             )
         }
     )
@@ -354,14 +366,14 @@ final class AppController: NSObject, NSMenuDelegate {
 
     private func refreshSavedAccountsOnMenuOpen() {
         performProfileRefresh(
-            .allAccounts(
+            .menuOpenSelective(
                 refreshCurrentAccount: shouldAutoRefreshWhenMenuOpens(settings.refreshIntervalPreset)
             )
         )
     }
 
     private func refreshAllProfiles() {
-        performProfileRefresh(.allAccounts(refreshCurrentAccount: true))
+        performProfileRefresh(.manualFull)
     }
 
     private func performProfileRefresh(_ intent: ProfileRefreshIntent) {
@@ -419,7 +431,7 @@ final class AppController: NSObject, NSMenuDelegate {
             refreshVaultProfiles(
                 currentRuntimeMaterial: currentRuntimeMaterial,
                 scheduleQuotaRefresh: true,
-                refreshScope: intent.quotaRefreshScope,
+                refreshPolicy: intent.refreshPolicy(refreshIntervalPreset: settings.refreshIntervalPreset),
                 reloadSnapshot: intent.shouldRefreshCurrentAccount
             )
         }
@@ -1323,7 +1335,7 @@ final class AppController: NSObject, NSMenuDelegate {
     private func refreshVaultProfiles(
         currentRuntimeMaterial: ProfileRuntimeMaterial?,
         scheduleQuotaRefresh: Bool,
-        refreshScope: VaultQuotaRefreshCoordinator.RefreshScope = .allAccounts,
+        refreshPolicy: VaultQuotaRefreshCoordinator.RefreshPolicy = .manualFull,
         reloadSnapshot: Bool = true
     ) {
         if reloadSnapshot || vaultSnapshot == nil {
@@ -1356,7 +1368,7 @@ final class AppController: NSObject, NSMenuDelegate {
                 currentProfile: currentProviderProfile,
                 vaultAccounts: vaultSnapshot.accounts,
                 cachedRecords: Array(vaultQuotaRecords.values),
-                refreshScope: refreshScope
+                refreshPolicy: refreshPolicy
             )
         ) { [weak self] records in
             guard let self else { return }
@@ -1423,6 +1435,7 @@ final class AppController: NSObject, NSMenuDelegate {
                 snapshot: quotaRecord?.snapshot,
                 healthStatus: quotaRecord?.healthStatus ?? .healthy,
                 errorMessage: quotaRecord?.errorSummary,
+                quotaFailureDisposition: quotaRecord?.failureDisposition,
                 isCurrent: runtimeMatches(record.runtimeMaterial, currentRuntimeMaterial),
                 managedFileURLs: [store.settingsURL, store.accountsIndexURL] + record.protectedFileURLs,
                 lastUsedAt: record.metadata.lastUsedAt,

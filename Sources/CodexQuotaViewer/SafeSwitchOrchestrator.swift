@@ -61,19 +61,22 @@ final class SwitchOrchestrator {
     private let rolloutSynchronizer: RolloutProviderSynchronizer
     private let repairClient: OfficialThreadRepairing
     private let desktopController: CodexDesktopControlling
+    private let quotaChannelInvalidator: CodexRPCChannelInvalidating
 
     init(
         store: ProfileStore,
         backupManager: BackupManager,
         rolloutSynchronizer: RolloutProviderSynchronizer,
         repairClient: OfficialThreadRepairing,
-        desktopController: CodexDesktopControlling
+        desktopController: CodexDesktopControlling,
+        quotaChannelInvalidator: CodexRPCChannelInvalidating
     ) {
         self.store = store
         self.backupManager = backupManager
         self.rolloutSynchronizer = rolloutSynchronizer
         self.repairClient = repairClient
         self.desktopController = desktopController
+        self.quotaChannelInvalidator = quotaChannelInvalidator
     }
 
     func preview(targetProfile: ProviderProfile) throws -> SwitchOperationPreview {
@@ -129,6 +132,7 @@ final class SwitchOrchestrator {
                 writer: writer
             )
             let repairSummary = try await repairClient.rescanAndRepair()
+            await quotaChannelInvalidator.invalidateAllReusableChannels()
             try await desktopController.reopenIfNeeded(previouslyRunning: previouslyRunning)
 
             return SwitchOperationResult(
@@ -256,13 +260,16 @@ final class SwitchOrchestrator {
 final class RollbackManager {
     private let backupManager: BackupManager
     private let desktopController: CodexDesktopControlling
+    private let quotaChannelInvalidator: CodexRPCChannelInvalidating
 
     init(
         backupManager: BackupManager,
-        desktopController: CodexDesktopControlling
+        desktopController: CodexDesktopControlling,
+        quotaChannelInvalidator: CodexRPCChannelInvalidating
     ) {
         self.backupManager = backupManager
         self.desktopController = desktopController
+        self.quotaChannelInvalidator = quotaChannelInvalidator
     }
 
     func rollbackLatest() async throws -> RestorePointManifest {
@@ -270,6 +277,7 @@ final class RollbackManager {
 
         do {
             let manifest = try backupManager.restoreLatestRestorePoint()
+            await quotaChannelInvalidator.invalidateAllReusableChannels()
             try await desktopController.reopenIfNeeded(previouslyRunning: previouslyRunning)
             return manifest
         } catch {

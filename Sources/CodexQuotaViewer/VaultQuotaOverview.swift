@@ -5,9 +5,30 @@ struct VaultQuotaSnapshotRecord: Codable, Equatable, Sendable {
     let snapshot: CodexSnapshot?
     let healthStatus: ProfileHealthStatus
     let errorSummary: String?
+    let failureDisposition: QuotaFailureDisposition?
     let fetchedAt: Date
     let authMode: CodexAuthMode
     let isCurrent: Bool
+
+    init(
+        accountID: String,
+        snapshot: CodexSnapshot?,
+        healthStatus: ProfileHealthStatus,
+        errorSummary: String?,
+        failureDisposition: QuotaFailureDisposition? = nil,
+        fetchedAt: Date,
+        authMode: CodexAuthMode,
+        isCurrent: Bool
+    ) {
+        self.accountID = accountID
+        self.snapshot = snapshot
+        self.healthStatus = healthStatus
+        self.errorSummary = errorSummary
+        self.failureDisposition = failureDisposition
+        self.fetchedAt = fetchedAt
+        self.authMode = authMode
+        self.isCurrent = isCurrent
+    }
 }
 
 final class VaultQuotaCacheStore {
@@ -266,32 +287,61 @@ func allAccountsMenuText(
 
 @MainActor
 final class VaultQuotaRefreshCoordinator {
-    typealias SnapshotFetcher = (ProfileRuntimeMaterial) async throws -> CodexSnapshot
+    typealias SnapshotFetcher = (ProfileRuntimeMaterial, TimeInterval) async throws -> CodexSnapshot
     typealias UpdateHandler = @MainActor ([VaultQuotaSnapshotRecord]) -> Void
     typealias CompletionHandler = @MainActor ([VaultQuotaSnapshotRecord]) -> Void
 
-    enum RefreshScope: String {
+    enum RefreshPolicy: Equatable, Sendable {
         case currentOnly
-        case allAccounts
+
+        case menuOpenSelective(staleAfter: TimeInterval)
+        case manualFull
+
+        var requestScopeKey: String {
+            switch self {
+            case .currentOnly:
+                return "currentOnly"
+            case .menuOpenSelective(let staleAfter):
+                return "menuOpenSelective:\(Int(staleAfter.rounded()))"
+            case .manualFull:
+                return "manualFull"
+            }
+        }
+
+        var retryConfiguration: RetryConfiguration? {
+            switch self {
+            case .currentOnly:
+                return nil
+            case .menuOpenSelective:
+                return RetryConfiguration(initialTimeout: 6, retryTimeout: 12)
+            case .manualFull:
+                return RetryConfiguration(initialTimeout: 10, retryTimeout: 15)
+            }
+        }
     }
 
     struct Request {
         let currentProfile: ProviderProfile?
         let vaultAccounts: [VaultAccountRecord]
         let cachedRecords: [VaultQuotaSnapshotRecord]
-        let refreshScope: RefreshScope
+        let refreshPolicy: RefreshPolicy
 
         init(
             currentProfile: ProviderProfile?,
             vaultAccounts: [VaultAccountRecord],
             cachedRecords: [VaultQuotaSnapshotRecord],
-            refreshScope: RefreshScope = .allAccounts
+            refreshPolicy: RefreshPolicy = .manualFull
         ) {
             self.currentProfile = currentProfile
             self.vaultAccounts = vaultAccounts
             self.cachedRecords = cachedRecords
-            self.refreshScope = refreshScope
+            self.refreshPolicy = refreshPolicy
         }
+    }
+
+    struct RetryConfiguration: Sendable {
+        let initialTimeout: TimeInterval
+        let retryTimeout: TimeInterval
     }
 
     private struct FetchTarget: Sendable {
@@ -310,6 +360,7 @@ final class VaultQuotaRefreshCoordinator {
 
     private let snapshotFetcherBox: SnapshotFetcherBox
     private let maxConcurrentChatGPTRefreshes: Int
+    private let nowProvider: @Sendable () -> Date
     private var activeTask: Task<Void, Never>?
     private var activeRequest: Request?
     private var pendingRequest: Request?
@@ -319,9 +370,11 @@ final class VaultQuotaRefreshCoordinator {
 
     init(
         maxConcurrentChatGPTRefreshes: Int = 3,
+        nowProvider: @escaping @Sendable () -> Date = Date.init,
         snapshotFetcher: @escaping SnapshotFetcher
     ) {
         self.maxConcurrentChatGPTRefreshes = max(1, maxConcurrentChatGPTRefreshes)
+        self.nowProvider = nowProvider
         snapshotFetcherBox = SnapshotFetcherBox(fetch: snapshotFetcher)
     }
 
@@ -367,7 +420,7 @@ final class VaultQuotaRefreshCoordinator {
                 .filter { activeAccountIDs.contains($0.accountID) }
                 .map { ($0.accountID, $0) }
         )
-        let now = Date()
+        let now = nowProvider()
         var reusedCurrentAccountIDs = Set<String>()
 
         if let currentProfile = request.currentProfile {
@@ -377,6 +430,7 @@ final class VaultQuotaRefreshCoordinator {
                     snapshot: currentProfile.snapshot,
                     healthStatus: currentProfile.healthStatus,
                     errorSummary: currentProfile.errorMessage,
+                    failureDisposition: currentProfile.quotaFailureDisposition,
                     fetchedAt: currentProfile.quotaFetchedAt ?? now,
                     authMode: currentProfile.authMode,
                     isCurrent: true
@@ -386,7 +440,7 @@ final class VaultQuotaRefreshCoordinator {
             onUpdate(sortedQuotaRecords(recordsByID.values))
         }
 
-        guard request.refreshScope == .allAccounts else {
+        guard request.refreshPolicy != .currentOnly else {
             completeRefresh(
                 finalRecords: sortedQuotaRecords(recordsByID.values),
                 onUpdate: onUpdate,
@@ -410,6 +464,7 @@ final class VaultQuotaRefreshCoordinator {
                         en: "Official quota unavailable",
                         zh: "官方额度不可用"
                     ),
+                    failureDisposition: nil,
                     fetchedAt: placeholderFetchedAt,
                     authMode: .apiKey,
                     isCurrent: false
@@ -420,7 +475,13 @@ final class VaultQuotaRefreshCoordinator {
 
         let chatGPTTargets = request.vaultAccounts.compactMap { record -> FetchTarget? in
             guard !reusedCurrentAccountIDs.contains(record.id),
-                  record.metadata.authMode != .apiKey else {
+                  record.metadata.authMode != .apiKey,
+                  shouldRefreshSavedAccount(
+                    record,
+                    cachedRecord: recordsByID[record.id],
+                    refreshPolicy: request.refreshPolicy,
+                    now: now
+                  ) else {
                 return nil
             }
 
@@ -441,7 +502,8 @@ final class VaultQuotaRefreshCoordinator {
                 group.addTask {
                     await Self.fetchQuotaSnapshotRecord(
                         for: target,
-                        using: snapshotFetcherBox
+                        using: snapshotFetcherBox,
+                        retryConfiguration: request.refreshPolicy.retryConfiguration
                     )
                 }
             }
@@ -457,7 +519,8 @@ final class VaultQuotaRefreshCoordinator {
                 group.addTask {
                     await Self.fetchQuotaSnapshotRecord(
                         for: nextTarget,
-                        using: snapshotFetcherBox
+                        using: snapshotFetcherBox,
+                        retryConfiguration: request.refreshPolicy.retryConfiguration
                     )
                 }
             }
@@ -512,35 +575,94 @@ final class VaultQuotaRefreshCoordinator {
     private func requestScopeKey(_ request: Request) -> String {
         let currentID = request.currentProfile?.id ?? ""
         let accountIDs = request.vaultAccounts.map(\.id).sorted().joined(separator: "|")
-        return "\(request.refreshScope.rawValue)::\(currentID)::\(accountIDs)"
+        return "\(request.refreshPolicy.requestScopeKey)::\(currentID)::\(accountIDs)"
     }
 
     nonisolated private static func fetchQuotaSnapshotRecord(
         for target: FetchTarget,
-        using snapshotFetcherBox: SnapshotFetcherBox
+        using snapshotFetcherBox: SnapshotFetcherBox,
+        retryConfiguration: RetryConfiguration?
     ) async -> VaultQuotaSnapshotRecord {
         do {
-            let snapshot = try await snapshotFetcherBox.fetch(target.runtimeMaterial)
+            let snapshot = try await fetchSnapshot(
+                for: target.runtimeMaterial,
+                using: snapshotFetcherBox,
+                retryConfiguration: retryConfiguration
+            )
             return VaultQuotaSnapshotRecord(
                 accountID: target.accountID,
                 snapshot: snapshot,
                 healthStatus: .healthy,
                 errorSummary: nil,
+                failureDisposition: nil,
                 fetchedAt: snapshot.fetchedAt,
                 authMode: .chatgpt,
                 isCurrent: false
             )
         } catch {
+            let failureDisposition = classifyQuotaFailureDisposition(from: error)
             return VaultQuotaSnapshotRecord(
                 accountID: target.accountID,
                 snapshot: nil,
                 healthStatus: classifyProfileHealth(from: error),
                 errorSummary: userFacingErrorMessage(error),
+                failureDisposition: failureDisposition,
                 fetchedAt: Date(),
                 authMode: target.authMode,
                 isCurrent: false
             )
         }
+    }
+
+    nonisolated private static func fetchSnapshot(
+        for runtimeMaterial: ProfileRuntimeMaterial,
+        using snapshotFetcherBox: SnapshotFetcherBox,
+        retryConfiguration: RetryConfiguration?
+    ) async throws -> CodexSnapshot {
+        let initialTimeout = retryConfiguration?.initialTimeout ?? 10
+
+        do {
+            return try await snapshotFetcherBox.fetch(runtimeMaterial, initialTimeout)
+        } catch {
+            guard let retryConfiguration,
+                  classifyQuotaFailureDisposition(from: error) == .transient else {
+                throw error
+            }
+            return try await snapshotFetcherBox.fetch(runtimeMaterial, retryConfiguration.retryTimeout)
+        }
+    }
+}
+
+private func shouldRefreshSavedAccount(
+    _ record: VaultAccountRecord,
+    cachedRecord: VaultQuotaSnapshotRecord?,
+    refreshPolicy: VaultQuotaRefreshCoordinator.RefreshPolicy,
+    now: Date
+) -> Bool {
+    switch refreshPolicy {
+    case .currentOnly:
+        return false
+    case .manualFull:
+        return true
+    case .menuOpenSelective(let staleAfter):
+        guard let cachedRecord else {
+            return true
+        }
+
+        if cachedRecord.healthStatus == .expired {
+            return true
+        }
+
+        if cachedRecord.healthStatus == .readFailure,
+           cachedRecord.failureDisposition == .transient {
+            return true
+        }
+
+        if now.timeIntervalSince(cachedRecord.fetchedAt) > staleAfter {
+            return true
+        }
+
+        return false
     }
 }
 

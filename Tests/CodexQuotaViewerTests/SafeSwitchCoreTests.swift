@@ -505,9 +505,11 @@ func rollbackManagerRestoresLatestRestorePointAndReopensCodexWhenNeeded() async 
 
         try Data("after".utf8).write(to: authURL, options: .atomic)
         let desktop = DesktopControllerSpy(isRunning: true)
+        let invalidator = ChannelInvalidatorSpy()
         let rollbackManager = RollbackManager(
             backupManager: backupManager,
-            desktopController: desktop
+            desktopController: desktop,
+            quotaChannelInvalidator: invalidator
         )
 
         let manifest = try await rollbackManager.rollbackLatest()
@@ -516,13 +518,52 @@ func rollbackManagerRestoresLatestRestorePointAndReopensCodexWhenNeeded() async 
         #expect(manifest.files.count == 1)
         #expect(desktop.closeInvocationCount == 1)
         #expect(desktop.reopenInvocationCount == 1)
+        #expect(await invalidator.invalidateAllCount == 1)
+}
+
+@MainActor
+@Test
+func switchOrchestratorInvalidatesReusableChannelsAfterSuccessfulSwitch() async throws {
+    let harness = try makeHarness()
+    try seedCurrentRuntime(in: harness, provider: "legacy")
+    _ = try writeRollout(under: harness.codexHomeURL, id: "switch", provider: "legacy")
+
+    let targetRuntime = ProfileRuntimeMaterial(
+        authData: Data(#"{"auth_mode":"chatgpt","tokens":{"access_token":"token-new","account_id":"acct-new"}}"#.utf8),
+        configData: Data("model_provider = \"openai\"\n".utf8)
+    )
+    let target = buildProviderProfile(
+        id: "acct-new",
+        fallbackDisplayName: "new@example.com",
+        source: .vault,
+        runtimeMaterial: targetRuntime,
+        snapshot: nil,
+        healthStatus: .healthy,
+        errorMessage: nil,
+        isCurrent: false
+    )
+
+    let repairer = RepairerSpy()
+    let desktop = DesktopControllerSpy(isRunning: true)
+    let invalidator = ChannelInvalidatorSpy()
+    let orchestrator = makeOrchestrator(
+        harness: harness,
+        repairer: repairer,
+        desktop: desktop,
+        invalidator: invalidator
+    )
+
+    _ = try await orchestrator.perform(targetProfile: target)
+
+    #expect(await invalidator.invalidateAllCount == 1)
 }
 
 @MainActor
 private func makeOrchestrator(
     harness: TestHarness,
     repairer: RepairerSpy,
-    desktop: DesktopControllerSpy
+    desktop: DesktopControllerSpy,
+    invalidator: ChannelInvalidatorSpy = ChannelInvalidatorSpy()
 ) -> SwitchOrchestrator {
     let store = ProfileStore(
         baseURL: harness.appSupportURL,
@@ -537,7 +578,8 @@ private func makeOrchestrator(
         ),
         rolloutSynchronizer: RolloutProviderSynchronizer(),
         repairClient: repairer,
-        desktopController: desktop
+        desktopController: desktop,
+        quotaChannelInvalidator: invalidator
     )
 }
 
@@ -623,6 +665,18 @@ private final class RepairerSpy: OfficialThreadRepairing {
             removedBrokenThreads: 0,
             hiddenSnapshotOnlySessions: 0
         )
+    }
+}
+
+actor ChannelInvalidatorSpy: CodexRPCChannelInvalidating {
+    private(set) var invalidateAllCount = 0
+
+    func invalidateAllReusableChannels() async {
+        invalidateAllCount += 1
+    }
+
+    func invalidateReusableChannel(for runtimeMaterial: ProfileRuntimeMaterial) async {
+        _ = runtimeMaterial
     }
 }
 

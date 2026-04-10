@@ -17,6 +17,18 @@ actor ConcurrentRefreshTracker {
     }
 }
 
+actor FetchedKeyRecorder {
+    private var keys: [String] = []
+
+    func append(_ key: String) {
+        keys.append(key)
+    }
+
+    func snapshot() -> [String] {
+        keys
+    }
+}
+
 @Test
 func vaultQuotaCacheStorePersistsSnapshotRecords() throws {
     let harness = try makeHarness()
@@ -48,6 +60,35 @@ func vaultQuotaCacheStorePersistsSnapshotRecords() throws {
     let loaded = try store.load()
 
     #expect(loaded == records)
+}
+
+@Test
+func vaultQuotaCacheStoreLoadsLegacyRecordsWithoutFailureDisposition() throws {
+    let harness = try makeHarness()
+    let cacheURL = harness.appSupportURL.appendingPathComponent("quota-cache.json")
+    try Data(
+        """
+        [
+          {
+            "accountID": "acct-legacy",
+            "authMode": "chatgpt",
+            "errorSummary": "Timed out while reading quota.",
+            "fetchedAt": "2027-01-01T00:00:00Z",
+            "healthStatus": "readFailure",
+            "isCurrent": false,
+            "snapshot": null
+          }
+        ]
+        """.utf8
+    )
+    .write(to: cacheURL, options: .atomic)
+
+    let store = VaultQuotaCacheStore(cacheURL: cacheURL)
+    let loaded = try store.load()
+
+    #expect(loaded.count == 1)
+    #expect(loaded.first?.accountID == "acct-legacy")
+    #expect(loaded.first?.failureDisposition == nil)
 }
 
 @Test
@@ -239,7 +280,7 @@ func vaultQuotaRefreshCoordinatorRefreshesChatGPTAccountEvenIfCachedAsCurrent() 
     )
 
     var fetchCount = 0
-    let coordinator = VaultQuotaRefreshCoordinator { runtimeMaterial in
+    let coordinator = VaultQuotaRefreshCoordinator { runtimeMaterial, _ in
         fetchCount += 1
         #expect(stableAccountRecordID(for: runtimeMaterial) == staleRecord.id)
         return makeTestSnapshot(
@@ -321,7 +362,7 @@ func vaultQuotaRefreshCoordinatorDropsCachedAccountsThatAreNoLongerSaved() async
         isCurrent: true,
         quotaFetchedAt: now
     )
-    let coordinator = VaultQuotaRefreshCoordinator { _ in
+    let coordinator = VaultQuotaRefreshCoordinator { _, _ in
         Issue.record("snapshotFetcher should not run for the current-only request")
         return makeTestSnapshot(
             email: "unexpected@example.com",
@@ -383,7 +424,7 @@ func vaultQuotaRefreshCoordinatorCoalescesEquivalentRequestsWithoutSecondFetchRo
         createdAt: Date(timeIntervalSince1970: 1_800_000_000)
     )
     var fetchCount = 0
-    let coordinator = VaultQuotaRefreshCoordinator { _ in
+    let coordinator = VaultQuotaRefreshCoordinator { _, _ in
         fetchCount += 1
         try await Task.sleep(nanoseconds: 40_000_000)
         return makeTestSnapshot(
@@ -466,7 +507,7 @@ func vaultQuotaRefreshCoordinatorCurrentOnlyScopePreservesCachedNonCurrentRecord
     )
 
     var fetchCount = 0
-    let coordinator = VaultQuotaRefreshCoordinator { _ in
+    let coordinator = VaultQuotaRefreshCoordinator { _, _ in
         fetchCount += 1
         return makeTestSnapshot(
             email: "unexpected@example.com",
@@ -498,7 +539,7 @@ func vaultQuotaRefreshCoordinatorCurrentOnlyScopePreservesCachedNonCurrentRecord
                         isCurrent: false
                     )
                 ],
-                refreshScope: .currentOnly
+                refreshPolicy: .currentOnly
             )
         ) { latest in
             guard !didResume, latest.count == 2 else {
@@ -535,7 +576,7 @@ func vaultQuotaRefreshCoordinatorBoundsConcurrentAllAccountsFetches() async {
             createdAt: Date(timeIntervalSince1970: 1_800_000_000)
         )
     }
-    let coordinator = VaultQuotaRefreshCoordinator(maxConcurrentChatGPTRefreshes: 2) { runtimeMaterial in
+    let coordinator = VaultQuotaRefreshCoordinator(maxConcurrentChatGPTRefreshes: 2) { runtimeMaterial, _ in
         await tracker.begin()
         try? await Task.sleep(nanoseconds: 50_000_000)
         await tracker.end()
@@ -554,7 +595,7 @@ func vaultQuotaRefreshCoordinatorBoundsConcurrentAllAccountsFetches() async {
                 currentProfile: nil,
                 vaultAccounts: records,
                 cachedRecords: [],
-                refreshScope: .allAccounts
+                refreshPolicy: .manualFull
             )
         ) { latest in
             guard !didResume, latest.count == records.count, latest.allSatisfy({ $0.snapshot != nil }) else {
@@ -567,6 +608,229 @@ func vaultQuotaRefreshCoordinatorBoundsConcurrentAllAccountsFetches() async {
 
     #expect(refreshed.count == 4)
     #expect(await tracker.maxActiveCount <= 2)
+}
+
+@MainActor
+@Test
+func vaultQuotaRefreshCoordinatorMenuOpenSelectiveRefreshesOnlyStaleExpiredTransientAndUncachedAccounts() async {
+    let now = Date(timeIntervalSince1970: 1_800_000_300)
+    let staleRuntime = makeTestRuntimeMaterial(id: "stale", authMode: .chatgpt)
+    let expiredRuntime = makeTestRuntimeMaterial(id: "expired", authMode: .chatgpt)
+    let transientRuntime = makeTestRuntimeMaterial(id: "transient", authMode: .chatgpt)
+    let uncachedRuntime = makeTestRuntimeMaterial(id: "uncached", authMode: .chatgpt)
+    let healthyRuntime = makeTestRuntimeMaterial(id: "healthy", authMode: .chatgpt)
+    let needsLoginRuntime = makeTestRuntimeMaterial(id: "login", authMode: .chatgpt)
+    let terminalRuntime = makeTestRuntimeMaterial(id: "terminal", authMode: .chatgpt)
+    let apiRuntime = makeTestRuntimeMaterial(id: "api", authMode: .apiKey)
+
+    let records = [
+        makeTestVaultRecord(from: makeTestProviderProfile(id: stableAccountRecordID(for: staleRuntime), displayName: "stale@example.com", authMode: .chatgpt, snapshot: nil, runtimeMaterial: staleRuntime), createdAt: now),
+        makeTestVaultRecord(from: makeTestProviderProfile(id: stableAccountRecordID(for: expiredRuntime), displayName: "expired@example.com", authMode: .chatgpt, snapshot: nil, runtimeMaterial: expiredRuntime), createdAt: now),
+        makeTestVaultRecord(from: makeTestProviderProfile(id: stableAccountRecordID(for: transientRuntime), displayName: "transient@example.com", authMode: .chatgpt, snapshot: nil, runtimeMaterial: transientRuntime), createdAt: now),
+        makeTestVaultRecord(from: makeTestProviderProfile(id: stableAccountRecordID(for: uncachedRuntime), displayName: "uncached@example.com", authMode: .chatgpt, snapshot: nil, runtimeMaterial: uncachedRuntime), createdAt: now),
+        makeTestVaultRecord(from: makeTestProviderProfile(id: stableAccountRecordID(for: healthyRuntime), displayName: "healthy@example.com", authMode: .chatgpt, snapshot: nil, runtimeMaterial: healthyRuntime), createdAt: now),
+        makeTestVaultRecord(from: makeTestProviderProfile(id: stableAccountRecordID(for: needsLoginRuntime), displayName: "login@example.com", authMode: .chatgpt, snapshot: nil, runtimeMaterial: needsLoginRuntime), createdAt: now),
+        makeTestVaultRecord(from: makeTestProviderProfile(id: stableAccountRecordID(for: terminalRuntime), displayName: "terminal@example.com", authMode: .chatgpt, snapshot: nil, runtimeMaterial: terminalRuntime), createdAt: now),
+        makeTestVaultRecord(from: makeTestProviderProfile(id: stableAccountRecordID(for: apiRuntime), displayName: "api@example.com", authMode: .apiKey, snapshot: nil, runtimeMaterial: apiRuntime), createdAt: now),
+    ]
+
+    let staleFetchedAt = now.addingTimeInterval(-1_000)
+    let freshFetchedAt = now.addingTimeInterval(-60)
+    let fetchedKeys = FetchedKeyRecorder()
+    let coordinator = VaultQuotaRefreshCoordinator(nowProvider: { now }) { runtimeMaterial, _ in
+        await fetchedKeys.append(stableAccountRecordID(for: runtimeMaterial))
+        return makeTestSnapshot(
+            email: "\(stableAccountRecordID(for: runtimeMaterial))@example.com",
+            primaryRemaining: 60,
+            secondaryRemaining: 50,
+            fetchedAt: now
+        )
+    }
+
+    let finalRecords = await withCheckedContinuation { continuation in
+        coordinator.requestRefresh(
+            .init(
+                currentProfile: nil,
+                vaultAccounts: records,
+                cachedRecords: [
+                    VaultQuotaSnapshotRecord(
+                        accountID: stableAccountRecordID(for: staleRuntime),
+                        snapshot: makeTestSnapshot(email: "stale@example.com", primaryRemaining: 70, secondaryRemaining: 60, fetchedAt: staleFetchedAt),
+                        healthStatus: .healthy,
+                        errorSummary: nil,
+                        fetchedAt: staleFetchedAt,
+                        authMode: .chatgpt,
+                        isCurrent: false
+                    ),
+                    VaultQuotaSnapshotRecord(
+                        accountID: stableAccountRecordID(for: expiredRuntime),
+                        snapshot: nil,
+                        healthStatus: .expired,
+                        errorSummary: "Session expired",
+                        fetchedAt: freshFetchedAt,
+                        authMode: .chatgpt,
+                        isCurrent: false
+                    ),
+                    VaultQuotaSnapshotRecord(
+                        accountID: stableAccountRecordID(for: transientRuntime),
+                        snapshot: nil,
+                        healthStatus: .readFailure,
+                        errorSummary: "Timed out while reading quota.",
+                        failureDisposition: .transient,
+                        fetchedAt: freshFetchedAt,
+                        authMode: .chatgpt,
+                        isCurrent: false
+                    ),
+                    VaultQuotaSnapshotRecord(
+                        accountID: stableAccountRecordID(for: healthyRuntime),
+                        snapshot: makeTestSnapshot(email: "healthy@example.com", primaryRemaining: 75, secondaryRemaining: 65, fetchedAt: freshFetchedAt),
+                        healthStatus: .healthy,
+                        errorSummary: nil,
+                        fetchedAt: freshFetchedAt,
+                        authMode: .chatgpt,
+                        isCurrent: false
+                    ),
+                    VaultQuotaSnapshotRecord(
+                        accountID: stableAccountRecordID(for: needsLoginRuntime),
+                        snapshot: nil,
+                        healthStatus: .needsLogin,
+                        errorSummary: "Sign in required",
+                        fetchedAt: freshFetchedAt,
+                        authMode: .chatgpt,
+                        isCurrent: false
+                    ),
+                    VaultQuotaSnapshotRecord(
+                        accountID: stableAccountRecordID(for: terminalRuntime),
+                        snapshot: nil,
+                        healthStatus: .readFailure,
+                        errorSummary: "Refresh failed",
+                        failureDisposition: .terminal,
+                        fetchedAt: freshFetchedAt,
+                        authMode: .chatgpt,
+                        isCurrent: false
+                    ),
+                ],
+                refreshPolicy: .menuOpenSelective(staleAfter: staleThreshold(for: .fiveMinutes))
+            )
+        ) { _ in
+        } onComplete: { latest in
+            continuation.resume(returning: latest)
+        }
+    }
+
+    let actualFetchedKeys = Set(await fetchedKeys.snapshot())
+    let expectedFetchedKeys = Set([
+        stableAccountRecordID(for: staleRuntime),
+        stableAccountRecordID(for: expiredRuntime),
+        stableAccountRecordID(for: transientRuntime),
+        stableAccountRecordID(for: uncachedRuntime),
+    ])
+    #expect(actualFetchedKeys == expectedFetchedKeys)
+    #expect(finalRecords.contains(where: { $0.accountID == stableAccountRecordID(for: uncachedRuntime) && $0.snapshot != nil }))
+    #expect(finalRecords.first(where: { $0.accountID == stableAccountRecordID(for: apiRuntime) })?.snapshot == nil)
+}
+
+@MainActor
+@Test
+func vaultQuotaRefreshCoordinatorRetriesTransientFailuresOnceForMenuOpenSelective() async {
+    let now = Date(timeIntervalSince1970: 1_800_000_400)
+    let runtime = makeTestRuntimeMaterial(id: "retry-target", authMode: .chatgpt)
+    let record = makeTestVaultRecord(
+        from: makeTestProviderProfile(
+            id: stableAccountRecordID(for: runtime),
+            displayName: "retry@example.com",
+            authMode: .chatgpt,
+            snapshot: nil,
+            runtimeMaterial: runtime
+        ),
+        createdAt: now
+    )
+
+    var timeouts: [TimeInterval] = []
+    var attempts = 0
+    let coordinator = VaultQuotaRefreshCoordinator { _, timeout in
+        attempts += 1
+        timeouts.append(timeout)
+        if attempts == 1 {
+            throw CodexRPCError.timeout
+        }
+        return makeTestSnapshot(
+            email: "retry@example.com",
+            primaryRemaining: 55,
+            secondaryRemaining: 45,
+            fetchedAt: now
+        )
+    }
+
+    let refreshed = await withCheckedContinuation { continuation in
+        var resumed = false
+        coordinator.requestRefresh(
+            .init(
+                currentProfile: nil,
+                vaultAccounts: [record],
+                cachedRecords: [],
+                refreshPolicy: .menuOpenSelective(staleAfter: staleThreshold(for: .fiveMinutes))
+            )
+        ) { latest in
+            guard !resumed, latest.first?.snapshot?.account.email == "retry@example.com" else {
+                return
+            }
+            resumed = true
+            continuation.resume(returning: latest)
+        }
+    }
+
+    #expect(refreshed.count == 1)
+    #expect(attempts == 2)
+    #expect(timeouts == [6, 12])
+}
+
+@MainActor
+@Test
+func vaultQuotaRefreshCoordinatorDoesNotRetryTerminalFailures() async {
+    let now = Date(timeIntervalSince1970: 1_800_000_450)
+    let runtime = makeTestRuntimeMaterial(id: "terminal-target", authMode: .chatgpt)
+    let record = makeTestVaultRecord(
+        from: makeTestProviderProfile(
+            id: stableAccountRecordID(for: runtime),
+            displayName: "terminal@example.com",
+            authMode: .chatgpt,
+            snapshot: nil,
+            runtimeMaterial: runtime
+        ),
+        createdAt: now
+    )
+
+    var attempts = 0
+    let coordinator = VaultQuotaRefreshCoordinator { _, _ in
+        attempts += 1
+        throw CodexRPCError.invalidResponse("malformed")
+    }
+
+    let refreshed = await withCheckedContinuation { continuation in
+        var resumed = false
+        coordinator.requestRefresh(
+            .init(
+                currentProfile: nil,
+                vaultAccounts: [record],
+                cachedRecords: [],
+                refreshPolicy: .menuOpenSelective(staleAfter: staleThreshold(for: .fiveMinutes))
+            )
+        ) { latest in
+            guard !resumed,
+                  let first = latest.first,
+                  first.snapshot == nil,
+                  first.failureDisposition == .terminal else {
+                return
+            }
+            resumed = true
+            continuation.resume(returning: latest)
+        }
+    }
+
+    #expect(refreshed.count == 1)
+    #expect(attempts == 1)
+    #expect(refreshed.first?.failureDisposition == .terminal)
 }
 
 @Test
