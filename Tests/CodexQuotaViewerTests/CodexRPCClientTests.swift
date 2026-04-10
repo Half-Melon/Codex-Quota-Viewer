@@ -47,6 +47,34 @@ actor FakeChannel: CodexRPCChanneling {
     }
 }
 
+final class FakeProcessStatusInspector: CodexRPCProcessStatusInspecting {
+    var isRunning: Bool
+    private let storedTerminationStatus: Int32
+    private(set) var terminationStatusAccessCount = 0
+
+    init(isRunning: Bool, terminationStatus: Int32) {
+        self.isRunning = isRunning
+        storedTerminationStatus = terminationStatus
+    }
+
+    var terminationStatus: Int32 {
+        terminationStatusAccessCount += 1
+        return storedTerminationStatus
+    }
+}
+
+private func makeExecutableScript(contents: String) throws -> URL {
+    let fileManager = FileManager.default
+    let root = fileManager.temporaryDirectory
+        .appendingPathComponent("CodexRPCClientTests-\(UUID().uuidString)", isDirectory: true)
+    try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let scriptURL = root.appendingPathComponent("codex", isDirectory: false)
+    try Data(contents.utf8).write(to: scriptURL, options: .atomic)
+    try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+    return scriptURL
+}
+
 @Test
 func codexRPCChannelInvalidationStateDefersCleanupUntilActiveFetchEnds() {
     var state = CodexRPCChannelInvalidationState()
@@ -156,4 +184,55 @@ func codexRPCChannelPoolRecreatesChannelAfterTTLExpires() async throws {
     _ = try await pool.fetchSnapshot(runtimeMaterial: runtime, timeout: 6)
 
     #expect(await factory.createdKeys == [key, key])
+}
+
+@Test
+func availableCodexTerminationStatusSkipsUnsafeReadsWhileProcessIsStillRunning() {
+    let process = FakeProcessStatusInspector(isRunning: true, terminationStatus: 9)
+
+    let status = availableCodexTerminationStatus(of: process)
+
+    #expect(status == nil)
+    #expect(process.terminationStatusAccessCount == 0)
+}
+
+@Test
+func codexStreamEndedErrorReturnsCancellationWhenReadWasCancelled() {
+    let error = codexStreamEndedError(
+        stderrText: "",
+        terminationStatus: nil,
+        isCancelled: true
+    )
+
+    #expect(error is CancellationError)
+}
+
+@Test
+func codexRPCChannelReturnsInvalidResponseWhenOutputEndsBeforeProcessExits() async throws {
+    let scriptURL = try makeExecutableScript(
+        contents: """
+        #!/bin/zsh
+        exec 1>&-
+        sleep 2
+        """
+    )
+    let runtime = makeTestRuntimeMaterial(id: "early-eof", authMode: .chatgpt)
+    let channel = try CodexRPCChannel.make(
+        runtimeMaterial: runtime,
+        launchConfiguration: (executableURL: scriptURL, arguments: [])
+    )
+
+    defer {
+        Task {
+            await channel.invalidate()
+            try? FileManager.default.removeItem(at: scriptURL.deletingLastPathComponent())
+        }
+    }
+
+    do {
+        _ = try await channel.fetchSnapshot(timeout: 5)
+        Issue.record("Expected fetchSnapshot to fail when stdout closes before the process exits.")
+    } catch let error as CodexRPCError {
+        #expect(error == .invalidResponse("app-server exited early."))
+    }
 }

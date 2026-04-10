@@ -7,6 +7,6 @@ enum AppIdentity {
     static let supportDirectoryName = "CodexQuotaViewer"
     static let launchAgentLabel = bundleIdentifier
     static let rpcClientName = "CodexQuotaViewer"
-    static let rpcClientVersion = "1.0.2"
+    static let rpcClientVersion = "1.0.3"
     static let temporaryDirectoryPrefix = "CodexQuotaViewer"
 }

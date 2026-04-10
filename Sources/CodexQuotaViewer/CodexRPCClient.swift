@@ -52,6 +52,47 @@ private struct TemporaryCodexRuntime {
     let tempCodexHomeURL: URL
 }
 
+protocol CodexRPCProcessStatusInspecting {
+    var isRunning: Bool { get }
+    var terminationStatus: Int32 { get }
+}
+
+extension Process: CodexRPCProcessStatusInspecting {}
+
+func availableCodexTerminationStatus(
+    of process: some CodexRPCProcessStatusInspecting
+) -> Int32? {
+    guard !process.isRunning else {
+        return nil
+    }
+
+    return process.terminationStatus
+}
+
+func codexStreamEndedError(
+    stderrText: String,
+    terminationStatus: Int32?,
+    isCancelled: Bool
+) -> Error {
+    if isCancelled {
+        return CancellationError()
+    }
+
+    if let terminationStatus,
+       let failureError = codexProcessFailureError(
+           terminationStatus: terminationStatus,
+           stderrText: stderrText
+       ) {
+        return failureError
+    }
+
+    if !stderrText.isEmpty {
+        return CodexRPCError.rpc(stderrText)
+    }
+
+    return CodexRPCError.invalidResponse("app-server exited early.")
+}
+
 func fallbackRateLimitsSnapshot(
     requestID: String?,
     errorCode: Int,
@@ -234,9 +275,14 @@ actor CodexRPCChannel: CodexRPCChanneling {
 
     static func make(
         runtimeMaterial: ProfileRuntimeMaterial,
+        launchConfiguration: (executableURL: URL, arguments: [String])? = nil,
         fileManager: FileManager = .default
     ) throws -> CodexRPCChannel {
-        let launch = try defaultLaunchConfiguration()
+        let launch = if let launchConfiguration {
+            launchConfiguration
+        } else {
+            try defaultLaunchConfiguration()
+        }
         let runtime = try prepareTemporaryCodexRuntime(
             authData: runtimeMaterial.authData,
             configData: runtimeMaterial.configData,
@@ -415,7 +461,7 @@ actor CodexRPCChannel: CodexRPCChanneling {
             }
         }
 
-        throw try streamEndedError()
+        throw try streamEndedError(isCancelled: Task.isCancelled)
     }
 
     private func nextOutputLine() async throws -> String? {
@@ -487,16 +533,20 @@ actor CodexRPCChannel: CodexRPCChanneling {
         return result.rateLimits
     }
 
-    private func streamEndedError() throws -> CodexRPCError {
-        let stderrText = try readPipeText(from: stderrHandle)
-        if let failureError = codexProcessFailureError(
-            terminationStatus: process.terminationStatus,
-            stderrText: stderrText
-        ) {
-            return failureError
+    private func streamEndedError(isCancelled: Bool) throws -> Error {
+        let terminationStatus = availableCodexTerminationStatus(of: process)
+        let stderrText: String
+        if terminationStatus == nil {
+            stderrText = ""
+        } else {
+            stderrText = try readPipeText(from: stderrHandle)
         }
 
-        return CodexRPCError.invalidResponse("app-server exited early.")
+        return codexStreamEndedError(
+            stderrText: stderrText,
+            terminationStatus: terminationStatus,
+            isCancelled: isCancelled
+        )
     }
 
     private func makeRequestID() -> String {
@@ -739,17 +789,22 @@ struct CodexRPCClient: Sendable, CodexRPCChannelInvalidating {
             }
         }
 
-        process.waitUntilExit()
-
-        let stderrText = try readPipeText(from: stderrHandle)
-        if let failureError = codexProcessFailureError(
-            terminationStatus: process.terminationStatus,
-            stderrText: stderrText
-        ) {
-            throw failureError
+        if Task.isCancelled {
+            throw CancellationError()
         }
 
-        throw CodexRPCError.invalidResponse("app-server exited early.")
+        process.waitUntilExit()
+
+        if Task.isCancelled {
+            throw CancellationError()
+        }
+
+        let stderrText = try readPipeText(from: stderrHandle)
+        throw codexStreamEndedError(
+            stderrText: stderrText,
+            terminationStatus: process.terminationStatus,
+            isCancelled: false
+        )
     }
 
     private static func makeDefaultChannelPool() -> CodexRPCChannelPool {
