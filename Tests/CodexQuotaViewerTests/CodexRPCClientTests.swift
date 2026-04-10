@@ -48,6 +48,34 @@ actor FakeChannel: CodexRPCChanneling {
 }
 
 @Test
+func codexRPCChannelInvalidationStateDefersCleanupUntilActiveFetchEnds() {
+    var state = CodexRPCChannelInvalidationState()
+
+    let didBeginFetch = state.beginFetch()
+    let invalidationDisposition = state.beginInvalidation()
+    let didBeginSecondFetch = state.beginFetch()
+    let shouldCleanupAfterFetchEnds = state.endFetch()
+
+    #expect(didBeginFetch)
+    #expect(invalidationDisposition == .deferCleanup)
+    #expect(didBeginSecondFetch == false)
+    #expect(shouldCleanupAfterFetchEnds)
+}
+
+@Test
+func codexRPCChannelInvalidationStateCleansUpImmediatelyWithoutActiveFetch() {
+    var state = CodexRPCChannelInvalidationState()
+
+    let firstInvalidationDisposition = state.beginInvalidation()
+    let secondInvalidationDisposition = state.beginInvalidation()
+    let didBeginFetch = state.beginFetch()
+
+    #expect(firstInvalidationDisposition == .cleanupNow)
+    #expect(secondInvalidationDisposition == .none)
+    #expect(didBeginFetch == false)
+}
+
+@Test
 func codexRPCChannelPoolReusesChannelWithinTTLForSameRuntime() async throws {
     let runtime = makeTestRuntimeMaterial(id: "pooled-runtime", authMode: .chatgpt)
     let key = runtimeIdentityKey(for: canonicalRuntimeMaterialForStorage(runtime))

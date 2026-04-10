@@ -180,6 +180,43 @@ actor CodexRPCChannelPool {
     }
 }
 
+enum CodexRPCChannelInvalidationDisposition: Equatable {
+    case none
+    case deferCleanup
+    case cleanupNow
+}
+
+struct CodexRPCChannelInvalidationState {
+    private(set) var activeFetchCount = 0
+    private(set) var isInvalidated = false
+
+    mutating func beginFetch() -> Bool {
+        guard !isInvalidated else {
+            return false
+        }
+
+        activeFetchCount += 1
+        return true
+    }
+
+    mutating func endFetch() -> Bool {
+        if activeFetchCount > 0 {
+            activeFetchCount -= 1
+        }
+
+        return isInvalidated && activeFetchCount == 0
+    }
+
+    mutating func beginInvalidation() -> CodexRPCChannelInvalidationDisposition {
+        guard !isInvalidated else {
+            return .none
+        }
+
+        isInvalidated = true
+        return activeFetchCount > 0 ? .deferCleanup : .cleanupNow
+    }
+}
+
 actor CodexRPCChannel: CodexRPCChanneling {
     private let process: Process
     private let inputHandle: FileHandle
@@ -191,7 +228,9 @@ actor CodexRPCChannel: CodexRPCChanneling {
     private var bufferedOutput = Data()
     private var nextRequestNumber = 0
     private var isInitialized = false
-    private var isInvalidated = false
+    private var invalidationState = CodexRPCChannelInvalidationState()
+    private var didCloseInputHandle = false
+    private var didFinalizeCleanup = false
 
     static func make(
         runtimeMaterial: ProfileRuntimeMaterial,
@@ -253,8 +292,13 @@ actor CodexRPCChannel: CodexRPCChanneling {
     }
 
     func fetchSnapshot(timeout: TimeInterval) async throws -> CodexSnapshot {
-        guard !isInvalidated else {
+        guard invalidationState.beginFetch() else {
             throw CodexRPCError.invalidResponse("app-server exited early.")
+        }
+        defer {
+            if invalidationState.endFetch() {
+                finalizeCleanup()
+            }
         }
 
         return try await withThrowingTaskGroup(of: CodexSnapshot.self) { group in
@@ -278,20 +322,15 @@ actor CodexRPCChannel: CodexRPCChanneling {
     }
 
     func invalidate() async {
-        if isInvalidated {
+        switch invalidationState.beginInvalidation() {
+        case .none:
             return
+        case .deferCleanup:
+            terminateProcessIfRunning()
+        case .cleanupNow:
+            terminateProcessIfRunning()
+            finalizeCleanup()
         }
-
-        isInvalidated = true
-
-        if process.isRunning {
-            process.terminate()
-        }
-
-        try? inputHandle.close()
-        try? outputHandle.close()
-        try? stderrHandle.close()
-        try? FileManager.default.removeItem(at: temporaryHomeURL)
     }
 
     private func fetchSnapshotUnsafe() async throws -> CodexSnapshot {
@@ -463,6 +502,33 @@ actor CodexRPCChannel: CodexRPCChanneling {
     private func makeRequestID() -> String {
         nextRequestNumber += 1
         return String(nextRequestNumber)
+    }
+
+    private func terminateProcessIfRunning() {
+        if process.isRunning {
+            process.terminate()
+        }
+    }
+
+    private func closeInputHandleIfNeeded() {
+        guard !didCloseInputHandle else {
+            return
+        }
+
+        try? inputHandle.close()
+        didCloseInputHandle = true
+    }
+
+    private func finalizeCleanup() {
+        guard !didFinalizeCleanup else {
+            return
+        }
+
+        didFinalizeCleanup = true
+        closeInputHandleIfNeeded()
+        try? outputHandle.close()
+        try? stderrHandle.close()
+        try? FileManager.default.removeItem(at: temporaryHomeURL)
     }
 }
 
