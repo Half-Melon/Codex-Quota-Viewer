@@ -19,29 +19,12 @@ func buildQuotaOverviewMenuItems(
                     for: tile,
                     isPerformingSafeSwitchOperation: isPerformingSafeSwitchOperation
                 )
-                let item = NSMenuItem(
-                    title: presentation.name,
-                    action: presentation.triggersDirectSwitch ? activateSavedAccountAction : nil,
-                    keyEquivalent: ""
+                return makeQuotaOverviewRowItem(
+                    tileID: tile.profile.id,
+                    presentation: presentation,
+                    target: target,
+                    activateSavedAccountAction: activateSavedAccountAction
                 )
-                item.target = target
-                item.representedObject = tile.profile.id
-                item.isEnabled = presentation.isEnabled
-                item.toolTip = presentation.accessibilityLabel
-                item.view = AccountMenuRowView(
-                    model: AccountMenuRowModel(
-                        name: presentation.name,
-                        primaryRemainingText: presentation.primaryRemainingText,
-                        secondaryRemainingText: presentation.secondaryRemainingText,
-                        primaryResetText: presentation.primaryResetText,
-                        secondaryResetText: presentation.secondaryResetText,
-                        indicatorColor: quotaOverviewIndicatorColor(for: presentation.state),
-                        isCurrent: presentation.isCurrent,
-                        isEnabled: presentation.isEnabled,
-                        accessibilityLabel: presentation.accessibilityLabel
-                    )
-                )
-                return item
             }
         )
     } else {
@@ -69,6 +52,139 @@ func buildQuotaOverviewMenuItems(
     items.append(allAccountsItem)
 
     return items
+}
+
+@MainActor
+func reconcileQuotaOverviewMenuItemsInPlace(
+    _ existingItems: [NSMenuItem],
+    quotaOverviewState: QuotaOverviewState?,
+    refreshIntervalPreset: RefreshIntervalPreset,
+    isPerformingSafeSwitchOperation: Bool,
+    target: AnyObject?,
+    activateSavedAccountAction: Selector
+) -> Bool {
+    if let quotaOverviewState,
+       !quotaOverviewState.boardTiles.isEmpty {
+        guard existingItems.count == quotaOverviewState.boardTiles.count + 1 else {
+            return false
+        }
+
+        for (index, tile) in quotaOverviewState.boardTiles.enumerated() {
+            let presentation = buildQuotaOverviewRowPresentation(
+                for: tile,
+                isPerformingSafeSwitchOperation: isPerformingSafeSwitchOperation
+            )
+            let item = existingItems[index]
+            guard let rowView = item.view as? AccountMenuRowView else {
+                return false
+            }
+
+            item.title = presentation.name
+            item.action = presentation.triggersDirectSwitch ? activateSavedAccountAction : nil
+            item.target = target
+            item.representedObject = tile.profile.id
+            item.isEnabled = presentation.isEnabled
+            item.toolTip = presentation.accessibilityLabel
+            rowView.apply(model: quotaOverviewRowModel(from: presentation))
+        }
+
+        let allAccountsItem = existingItems[quotaOverviewState.boardTiles.count]
+        configureAllAccountsItem(
+            allAccountsItem,
+            quotaOverviewState: quotaOverviewState,
+            refreshIntervalPreset: refreshIntervalPreset,
+            isPerformingSafeSwitchOperation: isPerformingSafeSwitchOperation,
+            target: target,
+            activateSavedAccountAction: activateSavedAccountAction
+        )
+        return true
+    }
+
+    guard existingItems.count == 2 else {
+        return false
+    }
+
+    let emptyStateItem = existingItems[0]
+    guard emptyStateItem.view == nil else {
+        return false
+    }
+    emptyStateItem.title = quotaOverviewEmptyStateMessage(for: quotaOverviewState)
+    emptyStateItem.action = nil
+    emptyStateItem.target = nil
+    emptyStateItem.representedObject = nil
+    emptyStateItem.isEnabled = false
+    emptyStateItem.toolTip = nil
+
+    configureAllAccountsItem(
+        existingItems[1],
+        quotaOverviewState: quotaOverviewState,
+        refreshIntervalPreset: refreshIntervalPreset,
+        isPerformingSafeSwitchOperation: isPerformingSafeSwitchOperation,
+        target: target,
+        activateSavedAccountAction: activateSavedAccountAction
+    )
+    return true
+}
+
+@MainActor
+private func makeQuotaOverviewRowItem(
+    tileID: String,
+    presentation: QuotaOverviewRowPresentation,
+    target: AnyObject?,
+    activateSavedAccountAction: Selector
+) -> NSMenuItem {
+    let item = NSMenuItem(
+        title: presentation.name,
+        action: presentation.triggersDirectSwitch ? activateSavedAccountAction : nil,
+        keyEquivalent: ""
+    )
+    item.target = target
+    item.representedObject = tileID
+    item.isEnabled = presentation.isEnabled
+    item.toolTip = presentation.accessibilityLabel
+    item.view = AccountMenuRowView(model: quotaOverviewRowModel(from: presentation))
+    return item
+}
+
+private func quotaOverviewRowModel(
+    from presentation: QuotaOverviewRowPresentation
+) -> AccountMenuRowModel {
+    AccountMenuRowModel(
+        name: presentation.name,
+        primaryRemainingText: presentation.primaryRemainingText,
+        secondaryRemainingText: presentation.secondaryRemainingText,
+        primaryResetText: presentation.primaryResetText,
+        secondaryResetText: presentation.secondaryResetText,
+        indicatorColor: quotaOverviewIndicatorColor(for: presentation.state),
+        isCurrent: presentation.isCurrent,
+        isEnabled: presentation.isEnabled,
+        accessibilityLabel: presentation.accessibilityLabel
+    )
+}
+
+@MainActor
+private func configureAllAccountsItem(
+    _ item: NSMenuItem,
+    quotaOverviewState: QuotaOverviewState?,
+    refreshIntervalPreset: RefreshIntervalPreset,
+    isPerformingSafeSwitchOperation: Bool,
+    target: AnyObject?,
+    activateSavedAccountAction: Selector
+) {
+    item.title = AppLocalization.localized(en: "All Accounts", zh: "全部账号")
+    item.action = nil
+    item.target = nil
+    item.representedObject = nil
+    item.isEnabled = true
+    item.toolTip = nil
+    item.view = nil
+    item.submenu = buildAllAccountsMenu(
+        quotaOverviewState: quotaOverviewState,
+        refreshIntervalPreset: refreshIntervalPreset,
+        isPerformingSafeSwitchOperation: isPerformingSafeSwitchOperation,
+        target: target,
+        activateSavedAccountAction: activateSavedAccountAction
+    )
 }
 
 private func quotaOverviewIndicatorColor(for state: QuotaTileState) -> NSColor {
@@ -140,6 +256,7 @@ func buildAllAccountsMenu(
 @MainActor
 func buildMaintenanceMenu(
     isRefreshing: Bool,
+    refreshProgress: RefreshProgress? = nil,
     isLaunchingSessionManager: Bool,
     isPerformingSafeSwitchOperation: Bool,
     hasRollbackRestorePoint: Bool,
@@ -153,7 +270,7 @@ func buildMaintenanceMenu(
 
     let refreshItem = NSMenuItem(
         title: isRefreshing
-            ? AppLocalization.localized(en: "Refreshing…", zh: "刷新中…")
+            ? refreshItemTitle(refreshProgress: refreshProgress)
             : AppLocalization.localized(en: "Refresh All", zh: "全部刷新"),
         action: refreshAction,
         keyEquivalent: ""
@@ -194,4 +311,15 @@ func buildMaintenanceMenu(
     submenu.addItem(rollbackItem)
 
     return submenu
+}
+
+private func refreshItemTitle(refreshProgress: RefreshProgress?) -> String {
+    guard let refreshProgress else {
+        return AppLocalization.localized(en: "Refreshing…", zh: "刷新中…")
+    }
+
+    return AppLocalization.localized(
+        en: "Refreshing \(refreshProgress.fractionText)…",
+        zh: "刷新中 \(refreshProgress.fractionText)…"
+    )
 }

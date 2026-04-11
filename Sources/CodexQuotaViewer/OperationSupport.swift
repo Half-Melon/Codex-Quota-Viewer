@@ -60,6 +60,15 @@ struct RefreshRequestState: Equatable {
     }
 }
 
+struct RefreshProgress: Equatable {
+    let completedCount: Int
+    let totalCount: Int
+
+    var fractionText: String {
+        "\(completedCount)/\(totalCount)"
+    }
+}
+
 struct DeferredPresentationRefreshState: Equatable {
     private(set) var hasPendingRefresh = false
 

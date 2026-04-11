@@ -51,26 +51,32 @@ final class ProfileStore {
             .appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent("Application Support", isDirectory: true)
             .appendingPathComponent(AppIdentity.supportDirectoryName, isDirectory: true)
+        let defaultCodexHomeURL = home
+            .appendingPathComponent(".codex", isDirectory: true)
+            .standardizedFileURL
+        let resolvedCurrentAuthURL = (
+            currentAuthURL
+            ?? defaultCodexHomeURL.appendingPathComponent("auth.json", isDirectory: false)
+        ).standardizedFileURL
+        let resolvedCodexHomeURL = resolvedCurrentAuthURL
+            .deletingLastPathComponent()
+            .standardizedFileURL
         self.baseURL = baseURL ?? defaultBaseURL
         settingsURL = self.baseURL.appendingPathComponent("settings.json", isDirectory: false)
         accountsRootURL = self.baseURL.appendingPathComponent("Accounts", isDirectory: true)
         accountsIndexURL = accountsRootURL.appendingPathComponent("accounts.json", isDirectory: false)
         quotaCacheURL = self.baseURL.appendingPathComponent("quota-cache.json", isDirectory: false)
         sessionManagerUIConfigURL = self.baseURL.appendingPathComponent("session-manager-ui.json", isDirectory: false)
-        codexHomeURL = (currentAuthURL ?? home
-            .appendingPathComponent(".codex", isDirectory: true)
-            .appendingPathComponent("auth.json", isDirectory: false))
-            .deletingLastPathComponent()
-        self.currentAuthURL = currentAuthURL ?? codexHomeURL
-            .appendingPathComponent("auth.json", isDirectory: false)
-        currentConfigURL = codexHomeURL
+        codexHomeURL = resolvedCodexHomeURL
+        self.currentAuthURL = resolvedCurrentAuthURL
+        currentConfigURL = resolvedCodexHomeURL
             .appendingPathComponent("config.toml", isDirectory: false)
-        sessionsRootURL = codexHomeURL.appendingPathComponent("sessions", isDirectory: true)
-        archivedSessionsRootURL = codexHomeURL.appendingPathComponent("archived_sessions", isDirectory: true)
-        stateDatabaseURL = codexHomeURL.appendingPathComponent("state_5.sqlite", isDirectory: false)
-        stateDatabaseWALURL = codexHomeURL.appendingPathComponent("state_5.sqlite-wal", isDirectory: false)
-        stateDatabaseSHMURL = codexHomeURL.appendingPathComponent("state_5.sqlite-shm", isDirectory: false)
-        sessionIndexURL = codexHomeURL.appendingPathComponent("session_index.jsonl", isDirectory: false)
+        sessionsRootURL = resolvedCodexHomeURL.appendingPathComponent("sessions", isDirectory: true)
+        archivedSessionsRootURL = resolvedCodexHomeURL.appendingPathComponent("archived_sessions", isDirectory: true)
+        stateDatabaseURL = resolvedCodexHomeURL.appendingPathComponent("state_5.sqlite", isDirectory: false)
+        stateDatabaseWALURL = resolvedCodexHomeURL.appendingPathComponent("state_5.sqlite-wal", isDirectory: false)
+        stateDatabaseSHMURL = resolvedCodexHomeURL.appendingPathComponent("state_5.sqlite-shm", isDirectory: false)
+        sessionIndexURL = resolvedCodexHomeURL.appendingPathComponent("session_index.jsonl", isDirectory: false)
         sessionManagerHomeURL = home.appendingPathComponent(".codex-session-manager", isDirectory: true)
         sessionManagerDatabaseURL = sessionManagerHomeURL.appendingPathComponent("index.db", isDirectory: false)
         sessionManagerDatabaseWALURL = sessionManagerHomeURL.appendingPathComponent("index.db-wal", isDirectory: false)

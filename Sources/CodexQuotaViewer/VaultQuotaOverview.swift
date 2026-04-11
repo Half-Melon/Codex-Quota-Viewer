@@ -288,6 +288,7 @@ func allAccountsMenuText(
 @MainActor
 final class VaultQuotaRefreshCoordinator {
     typealias SnapshotFetcher = (ProfileRuntimeMaterial, TimeInterval) async throws -> CodexSnapshot
+    typealias ProgressHandler = @MainActor (RefreshProgress) -> Void
     typealias UpdateHandler = @MainActor ([VaultQuotaSnapshotRecord]) -> Void
     typealias CompletionHandler = @MainActor ([VaultQuotaSnapshotRecord]) -> Void
 
@@ -364,6 +365,7 @@ final class VaultQuotaRefreshCoordinator {
     private var activeTask: Task<Void, Never>?
     private var activeRequest: Request?
     private var pendingRequest: Request?
+    private var pendingProgressHandler: ProgressHandler?
     private var pendingHandler: UpdateHandler?
     private var pendingCompletionHandler: CompletionHandler?
     private var pendingPresentationRefresh = DeferredPresentationRefreshState()
@@ -384,18 +386,21 @@ final class VaultQuotaRefreshCoordinator {
 
     func requestRefresh(
         _ request: Request,
+        onProgress: ProgressHandler? = nil,
         onUpdate: @escaping UpdateHandler,
         onComplete: CompletionHandler? = nil
     ) {
         if let activeRequest {
             if requestScopeKey(activeRequest) == requestScopeKey(request) {
                 pendingPresentationRefresh.requestRefresh()
+                pendingProgressHandler = onProgress
                 pendingHandler = onUpdate
                 pendingCompletionHandler = onComplete
                 return
             }
 
             pendingRequest = request
+            pendingProgressHandler = onProgress
             pendingHandler = onUpdate
             pendingCompletionHandler = onComplete
             pendingPresentationRefresh = DeferredPresentationRefreshState()
@@ -405,12 +410,18 @@ final class VaultQuotaRefreshCoordinator {
         activeRequest = request
         activeTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.run(request, onUpdate: onUpdate, onComplete: onComplete)
+            await self.run(
+                request,
+                onProgress: onProgress,
+                onUpdate: onUpdate,
+                onComplete: onComplete
+            )
         }
     }
 
     private func run(
         _ request: Request,
+        onProgress: ProgressHandler?,
         onUpdate: @escaping UpdateHandler,
         onComplete: CompletionHandler?
     ) async {
@@ -422,6 +433,20 @@ final class VaultQuotaRefreshCoordinator {
         )
         let now = nowProvider()
         var reusedCurrentAccountIDs = Set<String>()
+        let totalProgressCount = request.vaultAccounts.count
+        var completedProgressCount = 0
+
+        func publishProgressIfNeeded() {
+            guard totalProgressCount > 0 else {
+                return
+            }
+            onProgress?(
+                RefreshProgress(
+                    completedCount: completedProgressCount,
+                    totalCount: totalProgressCount
+                )
+            )
+        }
 
         if let currentProfile = request.currentProfile {
             for record in request.vaultAccounts where shouldReuseCurrentSnapshot(for: record, currentProfile: currentProfile) {
@@ -437,12 +462,17 @@ final class VaultQuotaRefreshCoordinator {
                 )
                 reusedCurrentAccountIDs.insert(record.id)
             }
+            completedProgressCount += reusedCurrentAccountIDs.count
+            if !reusedCurrentAccountIDs.isEmpty {
+                publishProgressIfNeeded()
+            }
             onUpdate(sortedQuotaRecords(recordsByID.values))
         }
 
         guard request.refreshPolicy != .currentOnly else {
             completeRefresh(
                 finalRecords: sortedQuotaRecords(recordsByID.values),
+                onProgress: onProgress,
                 onUpdate: onUpdate,
                 onComplete: onComplete
             )
@@ -450,6 +480,7 @@ final class VaultQuotaRefreshCoordinator {
         }
 
         let placeholderFetchedAt = Date()
+        var apiPlaceholderCount = 0
         for record in request.vaultAccounts {
             if reusedCurrentAccountIDs.contains(record.id) {
                 continue
@@ -469,8 +500,13 @@ final class VaultQuotaRefreshCoordinator {
                     authMode: .apiKey,
                     isCurrent: false
                 )
-                onUpdate(sortedQuotaRecords(recordsByID.values))
+                apiPlaceholderCount += 1
             }
+        }
+        if apiPlaceholderCount > 0 {
+            completedProgressCount += apiPlaceholderCount
+            publishProgressIfNeeded()
+            onUpdate(sortedQuotaRecords(recordsByID.values))
         }
 
         let chatGPTTargets = request.vaultAccounts.compactMap { record -> FetchTarget? in
@@ -510,6 +546,8 @@ final class VaultQuotaRefreshCoordinator {
 
             while let record = await group.next() {
                 recordsByID[record.accountID] = record
+                completedProgressCount += 1
+                publishProgressIfNeeded()
                 onUpdate(sortedQuotaRecords(recordsByID.values))
 
                 guard let nextTarget = targetIterator.next() else {
@@ -528,6 +566,7 @@ final class VaultQuotaRefreshCoordinator {
 
         completeRefresh(
             finalRecords: sortedQuotaRecords(recordsByID.values),
+            onProgress: onProgress,
             onUpdate: onUpdate,
             onComplete: onComplete
         )
@@ -535,6 +574,7 @@ final class VaultQuotaRefreshCoordinator {
 
     private func completeRefresh(
         finalRecords: [VaultQuotaSnapshotRecord],
+        onProgress: ProgressHandler?,
         onUpdate: @escaping UpdateHandler,
         onComplete: CompletionHandler?
     ) {
@@ -544,13 +584,16 @@ final class VaultQuotaRefreshCoordinator {
 
         if let pendingRequest {
             onComplete?(finalRecords)
+            let nextProgressHandler = pendingProgressHandler ?? onProgress
             let nextHandler = pendingHandler ?? onUpdate
             let nextCompletionHandler = pendingCompletionHandler ?? onComplete
             self.pendingRequest = nil
+            self.pendingProgressHandler = nil
             self.pendingHandler = nil
             self.pendingCompletionHandler = nil
             requestRefresh(
                 pendingRequest,
+                onProgress: nextProgressHandler,
                 onUpdate: nextHandler,
                 onComplete: nextCompletionHandler
             )
@@ -560,6 +603,7 @@ final class VaultQuotaRefreshCoordinator {
         if hasPresentationOnlyFollowUp {
             let nextHandler = pendingHandler ?? onUpdate
             let nextCompletionHandler = pendingCompletionHandler ?? onComplete
+            pendingProgressHandler = nil
             pendingHandler = nil
             pendingCompletionHandler = nil
             nextHandler(finalRecords)
@@ -568,6 +612,7 @@ final class VaultQuotaRefreshCoordinator {
         }
 
         onComplete?(finalRecords)
+        pendingProgressHandler = nil
         pendingHandler = nil
         pendingCompletionHandler = nil
     }
@@ -699,13 +744,12 @@ private func prioritizedChatGPTProfiles(
             return lhsPriority < rhsPriority
         }
 
-        let lhsLastUsed = lhs.lastUsedAt ?? .distantPast
-        let rhsLastUsed = rhs.lastUsedAt ?? .distantPast
-        if lhsLastUsed != rhsLastUsed {
-            return lhsLastUsed > rhsLastUsed
-        }
-
-        return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
+        return profileLastUsedComparator(
+            lhsLastUsedAt: lhs.lastUsedAt,
+            lhsDisplayName: lhs.displayName,
+            rhsLastUsedAt: rhs.lastUsedAt,
+            rhsDisplayName: rhs.displayName
+        )
     }
 }
 
@@ -738,13 +782,13 @@ private func buildAllAccountsSections(
         refreshIntervalPreset: refreshIntervalPreset,
         now: now
     )
-    let sortedAPIProfiles = apiProfiles.sorted { lhs, rhs in
-        let lhsLastUsed = lhs.lastUsedAt ?? .distantPast
-        let rhsLastUsed = rhs.lastUsedAt ?? .distantPast
-        if lhsLastUsed != rhsLastUsed {
-            return lhsLastUsed > rhsLastUsed
-        }
-        return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
+    let sortedAPIProfiles = apiProfiles.sorted {
+        profileLastUsedComparator(
+            lhsLastUsedAt: $0.lastUsedAt,
+            lhsDisplayName: $0.displayName,
+            rhsLastUsedAt: $1.lastUsedAt,
+            rhsDisplayName: $1.displayName
+        )
     }
 
     var sections: [AllAccountsSectionModel] = []

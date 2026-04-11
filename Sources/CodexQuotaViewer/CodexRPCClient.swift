@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 enum CodexRPCError: LocalizedError, Equatable {
@@ -91,6 +92,99 @@ func codexStreamEndedError(
     }
 
     return CodexRPCError.invalidResponse("app-server exited early.")
+}
+
+private func childProcessIdentifiers(of parentPID: pid_t) -> [pid_t] {
+    let byteCount = Int(proc_listchildpids(parentPID, nil, 0))
+    guard byteCount > 0 else {
+        return []
+    }
+
+    let capacity = byteCount / MemoryLayout<pid_t>.stride
+    var childPIDs = Array(repeating: pid_t(0), count: capacity)
+    let filledByteCount = childPIDs.withUnsafeMutableBufferPointer { buffer in
+        proc_listchildpids(
+            parentPID,
+            buffer.baseAddress,
+            Int32(buffer.count * MemoryLayout<pid_t>.stride)
+        )
+    }
+    guard filledByteCount > 0 else {
+        return []
+    }
+
+    let filledCount = Int(filledByteCount) / MemoryLayout<pid_t>.stride
+    return Array(childPIDs.prefix(filledCount)).filter { $0 > 0 }
+}
+
+private func descendantProcessIdentifiers(of rootPID: pid_t) -> [pid_t] {
+    var pending = [rootPID]
+    var seen = Set<pid_t>()
+    var descendants: [pid_t] = []
+
+    while let parentPID = pending.popLast() {
+        for childPID in childProcessIdentifiers(of: parentPID) where seen.insert(childPID).inserted {
+            descendants.append(childPID)
+            pending.append(childPID)
+        }
+    }
+
+    return descendants
+}
+
+private func sendSignalIfAlive(_ signal: Int32, to processID: pid_t) {
+    guard processID > 0 else {
+        return
+    }
+
+    if kill(processID, 0) == 0 || errno == EPERM {
+        _ = kill(processID, signal)
+    }
+}
+
+private func reapChildProcess(_ processID: pid_t, timeout: TimeInterval) -> Bool {
+    guard processID > 0 else {
+        return true
+    }
+
+    let deadline = Date().addingTimeInterval(timeout)
+    var status: Int32 = 0
+    repeat {
+        let waitResult = waitpid(processID, &status, WNOHANG)
+        if waitResult == processID {
+            return true
+        }
+        if waitResult == -1 {
+            return errno == ECHILD || errno == ESRCH
+        }
+        Thread.sleep(forTimeInterval: 0.01)
+    } while Date() < deadline
+
+    return false
+}
+
+private func terminateProcessTree(_ process: Process) {
+    let rootPID = process.processIdentifier
+    guard rootPID > 0 else {
+        return
+    }
+
+    let descendants = descendantProcessIdentifiers(of: rootPID)
+
+    for childPID in descendants.reversed() {
+        sendSignalIfAlive(SIGTERM, to: childPID)
+    }
+    sendSignalIfAlive(SIGTERM, to: rootPID)
+
+    if reapChildProcess(rootPID, timeout: 0.5) {
+        return
+    }
+
+    for childPID in descendants.reversed() {
+        sendSignalIfAlive(SIGKILL, to: childPID)
+    }
+    sendSignalIfAlive(SIGKILL, to: rootPID)
+    _ = reapChildProcess(rootPID, timeout: 1.0)
 }
 
 func fallbackRateLimitsSnapshot(
@@ -337,6 +431,14 @@ actor CodexRPCChannel: CodexRPCChanneling {
         outputIterator = outputHandle.bytes.makeAsyncIterator()
     }
 
+    deinit {
+        terminateProcessTree(process)
+        try? inputHandle.close()
+        try? outputHandle.close()
+        try? stderrHandle.close()
+        try? FileManager.default.removeItem(at: temporaryHomeURL)
+    }
+
     func fetchSnapshot(timeout: TimeInterval) async throws -> CodexSnapshot {
         guard invalidationState.beginFetch() else {
             throw CodexRPCError.invalidResponse("app-server exited early.")
@@ -555,9 +657,7 @@ actor CodexRPCChannel: CodexRPCChanneling {
     }
 
     private func terminateProcessIfRunning() {
-        if process.isRunning {
-            process.terminate()
-        }
+        terminateProcessTree(process)
     }
 
     private func closeInputHandleIfNeeded() {

@@ -15,24 +15,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private var settings: AppSettings
     private var accountPanelState: SettingsAccountPanelState
 
-    private let refreshPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let languagePopup = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
-    private let iconStylePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let tabView = NSTabView()
-    private let generalSectionTitleLabel = NSTextField(labelWithString: "")
-    private let refreshRowLabel = NSTextField(labelWithString: "")
-    private let languageRowLabel = NSTextField(labelWithString: "")
-    private let iconStyleRowLabel = NSTextField(labelWithString: "")
-
-    private let importStatusLabel = NSTextField(labelWithString: "")
-    private let accountsHeaderView = NSView()
-    private let accountsScrollView = NSScrollView()
-    private let accountsTableView = NSTableView()
+    private let generalView = SettingsGeneralView()
+    private let accountsView = SettingsAccountsView()
     private lazy var accountsTableController = makeAccountsTableController()
-    private let addChatGPTButton = NSButton(title: "", target: nil, action: nil)
-    private let addAPIButton = NSButton(title: "", target: nil, action: nil)
-    private let openVaultButton = NSButton(title: "", target: nil, action: nil)
 
     init(settings: AppSettings, accountPanelState: SettingsAccountPanelState) {
         self.settings = settings
@@ -77,13 +63,26 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
         let generalItem = NSTabViewItem(identifier: "general")
         generalItem.label = AppLocalization.localized(en: "General", zh: "通用")
-        generalItem.view = makeGeneralTabView()
+        generalItem.view = generalView
         tabView.addTabViewItem(generalItem)
 
         let accountsItem = NSTabViewItem(identifier: "accounts")
         accountsItem.label = AppLocalization.localized(en: "Accounts", zh: "账号")
-        accountsItem.view = makeAccountsTabView()
+        accountsItem.view = accountsView
         tabView.addTabViewItem(accountsItem)
+
+        configurePopup(generalView.refreshPopup, values: RefreshIntervalPreset.allCases.map(\.rawValue))
+        configurePopup(generalView.languagePopup, values: AppLanguage.allCases.map(\.rawValue))
+        configurePopup(generalView.iconStylePopup, values: StatusItemStyle.allCases.map(\.rawValue))
+
+        generalView.launchAtLoginCheckbox.target = self
+        generalView.launchAtLoginCheckbox.action = #selector(controlChanged)
+        accountsView.addChatGPTButton.target = self
+        accountsView.addChatGPTButton.action = #selector(addChatGPTClicked)
+        accountsView.addAPIButton.target = self
+        accountsView.addAPIButton.action = #selector(addAPIClicked)
+        accountsView.openVaultButton.target = self
+        accountsView.openVaultButton.action = #selector(openVaultClicked)
 
         NSLayoutConstraint.activate([
             tabView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
@@ -93,144 +92,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         ])
     }
 
-    private func makeGeneralTabView() -> NSView {
-        let container = NSView()
-        container.autoresizingMask = [.width, .height]
-
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 16
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(stack)
-
-        configurePopup(refreshPopup, values: RefreshIntervalPreset.allCases.map(\.rawValue))
-        configurePopup(languagePopup, values: AppLanguage.allCases.map(\.rawValue))
-        configurePopup(iconStylePopup, values: StatusItemStyle.allCases.map(\.rawValue))
-        generalSectionTitleLabel.identifier = NSUserInterfaceItemIdentifier("settings.general.section")
-        refreshRowLabel.identifier = NSUserInterfaceItemIdentifier("settings.general.refresh")
-        languageRowLabel.identifier = NSUserInterfaceItemIdentifier("settings.general.language")
-        iconStyleRowLabel.identifier = NSUserInterfaceItemIdentifier("settings.general.icon-style")
-
-        launchAtLoginCheckbox.target = self
-        launchAtLoginCheckbox.action = #selector(controlChanged)
-
-        stack.addArrangedSubview(
-            makeSectionTitleLabel(generalSectionTitleLabel)
-        )
-        stack.addArrangedSubview(
-            makeRow(
-                label: refreshRowLabel,
-                control: refreshPopup
-            )
-        )
-        stack.addArrangedSubview(
-            makeRow(
-                label: languageRowLabel,
-                control: languagePopup
-            )
-        )
-        stack.addArrangedSubview(
-            makeRow(
-                label: iconStyleRowLabel,
-                control: iconStylePopup
-            )
-        )
-        stack.addArrangedSubview(launchAtLoginCheckbox)
-
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -20),
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 20),
-        ])
-
-        return container
-    }
-
-    private func makeAccountsTabView() -> NSView {
-        let container = NSView()
-        container.autoresizingMask = [.width, .height]
-
-        accountsHeaderView.identifier = NSUserInterfaceItemIdentifier("settings.accounts.header")
-        accountsHeaderView.translatesAutoresizingMaskIntoConstraints = false
-        accountsHeaderView.wantsLayer = true
-        accountsHeaderView.layer?.cornerRadius = 12
-        accountsHeaderView.layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.06).cgColor
-        container.addSubview(accountsHeaderView)
-
-        accountsScrollView.identifier = NSUserInterfaceItemIdentifier("settings.accounts.scroll")
-        accountsScrollView.translatesAutoresizingMaskIntoConstraints = false
-        accountsScrollView.drawsBackground = false
-        accountsScrollView.hasVerticalScroller = true
-        accountsScrollView.autohidesScrollers = true
-        accountsScrollView.borderType = .noBorder
-        accountsScrollView.documentView = accountsTableView
-        container.addSubview(accountsScrollView)
-
-        addChatGPTButton.target = self
-        addChatGPTButton.action = #selector(addChatGPTClicked)
-        addAPIButton.target = self
-        addAPIButton.action = #selector(addAPIClicked)
-        openVaultButton.target = self
-        openVaultButton.action = #selector(openVaultClicked)
-
-        [addChatGPTButton, addAPIButton, openVaultButton].forEach {
-            $0.controlSize = .small
-        }
-
-        let primaryActions = NSStackView(views: [addChatGPTButton, addAPIButton])
-        primaryActions.orientation = .horizontal
-        primaryActions.alignment = .centerY
-        primaryActions.spacing = 10
-        primaryActions.translatesAutoresizingMaskIntoConstraints = false
-
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        let buttonRow = NSStackView(views: [primaryActions, spacer, openVaultButton])
-        buttonRow.orientation = .horizontal
-        buttonRow.alignment = .centerY
-        buttonRow.spacing = 10
-        buttonRow.translatesAutoresizingMaskIntoConstraints = false
-
-        importStatusLabel.font = .systemFont(ofSize: 12)
-        importStatusLabel.textColor = .secondaryLabelColor
-        importStatusLabel.maximumNumberOfLines = 0
-        importStatusLabel.lineBreakMode = .byWordWrapping
-        importStatusLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        let headerStack = NSStackView(views: [buttonRow, importStatusLabel])
-        headerStack.orientation = .vertical
-        headerStack.alignment = .leading
-        headerStack.spacing = 10
-        headerStack.translatesAutoresizingMaskIntoConstraints = false
-        accountsHeaderView.addSubview(headerStack)
-
-        NSLayoutConstraint.activate([
-            accountsHeaderView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            accountsHeaderView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            accountsHeaderView.topAnchor.constraint(equalTo: container.topAnchor),
-
-            accountsScrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            accountsScrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            accountsScrollView.topAnchor.constraint(equalTo: accountsHeaderView.bottomAnchor, constant: 12),
-            accountsScrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-
-            headerStack.leadingAnchor.constraint(equalTo: accountsHeaderView.leadingAnchor, constant: 16),
-            headerStack.trailingAnchor.constraint(equalTo: accountsHeaderView.trailingAnchor, constant: -16),
-            headerStack.topAnchor.constraint(equalTo: accountsHeaderView.topAnchor, constant: 16),
-            headerStack.bottomAnchor.constraint(equalTo: accountsHeaderView.bottomAnchor, constant: -16),
-            buttonRow.widthAnchor.constraint(equalTo: headerStack.widthAnchor),
-            importStatusLabel.widthAnchor.constraint(equalTo: headerStack.widthAnchor),
-        ])
-
-        return container
-    }
-
     private func makeAccountsTableController() -> SettingsAccountsTableController {
-        let controller = SettingsAccountsTableController(tableView: accountsTableView)
+        let controller = SettingsAccountsTableController(tableView: accountsView.tableView)
         controller.onActivateAccount = { [weak self] identifier in
             self?.onActivateAccount?(identifier)
         }
@@ -243,34 +106,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         return controller
     }
 
-    private func makeSectionTitleLabel(_ label: NSTextField) -> NSTextField {
-        label.font = .systemFont(ofSize: 15, weight: .semibold)
-        label.textColor = .labelColor
-        return label
-    }
-
-    private func makeRow(label: NSTextField, control: NSView) -> NSView {
-        label.alignment = .right
-        label.setContentHuggingPriority(.required, for: .horizontal)
-        label.widthAnchor.constraint(equalToConstant: 112).isActive = true
-
-        let row = NSStackView(views: [label, control])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 12
-        return row
-    }
-
     private func applySettingsToControls() {
         applyLocalizedText()
-        updatePopupTitles(refreshPopup, values: RefreshIntervalPreset.allCases.map(\.displayName))
-        updatePopupTitles(languagePopup, values: AppLanguage.allCases.map(\.displayName))
-        updatePopupTitles(iconStylePopup, values: StatusItemStyle.allCases.map(\.displayName))
+        updatePopupTitles(generalView.refreshPopup, values: RefreshIntervalPreset.allCases.map(\.displayName))
+        updatePopupTitles(generalView.languagePopup, values: AppLanguage.allCases.map(\.displayName))
+        updatePopupTitles(generalView.iconStylePopup, values: StatusItemStyle.allCases.map(\.displayName))
 
-        selectItem(in: refreshPopup, matching: settings.refreshIntervalPreset.rawValue)
-        selectItem(in: languagePopup, matching: settings.appLanguage.rawValue)
-        selectItem(in: iconStylePopup, matching: settings.statusItemStyle.rawValue)
-        launchAtLoginCheckbox.state = settings.launchAtLoginEnabled ? .on : .off
+        selectItem(in: generalView.refreshPopup, matching: settings.refreshIntervalPreset.rawValue)
+        selectItem(in: generalView.languagePopup, matching: settings.appLanguage.rawValue)
+        selectItem(in: generalView.iconStylePopup, matching: settings.statusItemStyle.rawValue)
+        generalView.launchAtLoginCheckbox.state = settings.launchAtLoginEnabled ? .on : .off
     }
 
     private func applyAccountPanelState() {
@@ -280,30 +125,26 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
                 en: "Finish the current account operation before changing saved accounts.",
                 zh: "请先完成当前账号操作，再修改已保存账号。"
             )
-        importStatusLabel.stringValue = joinedNonEmptyParts(
+        accountsView.importStatusLabel.stringValue = joinedNonEmptyParts(
             [accountPanelState.importStatusText, actionsUnavailableExplanation],
             separator: "\n"
         )
-        importStatusLabel.isHidden = importStatusLabel.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        addChatGPTButton.isEnabled = accountPanelState.actionsEnabled
-        addAPIButton.isEnabled = accountPanelState.actionsEnabled
-        addChatGPTButton.toolTip = actionsUnavailableExplanation
-        addAPIButton.toolTip = actionsUnavailableExplanation
-        openVaultButton.isEnabled = true
+        accountsView.importStatusLabel.isHidden = accountsView.importStatusLabel.stringValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty
+        accountsView.addChatGPTButton.isEnabled = accountPanelState.actionsEnabled
+        accountsView.addAPIButton.isEnabled = accountPanelState.actionsEnabled
+        accountsView.addChatGPTButton.toolTip = actionsUnavailableExplanation
+        accountsView.addAPIButton.toolTip = actionsUnavailableExplanation
+        accountsView.openVaultButton.isEnabled = true
         accountsTableController.update(state: accountPanelState)
         window?.contentView?.layoutSubtreeIfNeeded()
     }
 
     private func applyLocalizedText() {
         window?.title = AppLocalization.localized(en: "Settings", zh: "设置")
-        generalSectionTitleLabel.stringValue = AppLocalization.localized(en: "General", zh: "通用")
-        refreshRowLabel.stringValue = AppLocalization.localized(en: "Refresh interval", zh: "刷新频率")
-        languageRowLabel.stringValue = AppLocalization.localized(en: "Language", zh: "语言")
-        iconStyleRowLabel.stringValue = AppLocalization.localized(en: "Menu bar style", zh: "状态栏样式")
-        launchAtLoginCheckbox.title = AppLocalization.localized(en: "Launch at login", zh: "登录时启动")
-        addChatGPTButton.title = AppLocalization.localized(en: "Sign in with ChatGPT", zh: "使用 ChatGPT 登录")
-        addAPIButton.title = AppLocalization.localized(en: "Add API Account", zh: "添加 API 账号")
-        openVaultButton.title = AppLocalization.localized(en: "Open Vault Folder", zh: "打开账号仓文件夹")
+        generalView.applyLocalizedText()
+        accountsView.applyLocalizedText()
 
         tabView.tabViewItems.first(where: { ($0.identifier as? String) == "general" })?.label =
             AppLocalization.localized(en: "General", zh: "通用")
@@ -335,22 +176,22 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     @objc
     private func controlChanged() {
-        if let rawValue = refreshPopup.selectedItem?.representedObject as? String,
+        if let rawValue = generalView.refreshPopup.selectedItem?.representedObject as? String,
            let preset = RefreshIntervalPreset(rawValue: rawValue) {
             settings.refreshIntervalPreset = preset
         }
 
-        if let rawValue = languagePopup.selectedItem?.representedObject as? String,
+        if let rawValue = generalView.languagePopup.selectedItem?.representedObject as? String,
            let language = AppLanguage(rawValue: rawValue) {
             settings.appLanguage = language
         }
 
-        if let rawValue = iconStylePopup.selectedItem?.representedObject as? String,
+        if let rawValue = generalView.iconStylePopup.selectedItem?.representedObject as? String,
            let style = StatusItemStyle(rawValue: rawValue) {
             settings.statusItemStyle = style
         }
 
-        settings.launchAtLoginEnabled = launchAtLoginCheckbox.state == .on
+        settings.launchAtLoginEnabled = generalView.launchAtLoginCheckbox.state == .on
         onSettingsChanged?(settings)
     }
 

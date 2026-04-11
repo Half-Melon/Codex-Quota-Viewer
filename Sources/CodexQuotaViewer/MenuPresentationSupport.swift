@@ -127,13 +127,13 @@ func buildSettingsAccountSections(
         .map(makeSettingsAccountItem)
     let apiItems = inputs
         .filter { !$0.isCurrent && $0.authMode == .apiKey }
-        .sorted { lhs, rhs in
-            let lhsLastUsed = lhs.lastUsedAt ?? .distantPast
-            let rhsLastUsed = rhs.lastUsedAt ?? .distantPast
-            if lhsLastUsed != rhsLastUsed {
-                return lhsLastUsed > rhsLastUsed
-            }
-            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+        .sorted {
+            profileLastUsedComparator(
+                lhsLastUsedAt: $0.lastUsedAt,
+                lhsDisplayName: $0.title,
+                rhsLastUsedAt: $1.lastUsedAt,
+                rhsDisplayName: $1.title
+            )
         }
         .map(makeSettingsAccountItem)
 
@@ -303,11 +303,12 @@ private func settingsAccountSortComparator(
 
     let lhsLastUsed = lhs.lastUsedAt ?? .distantPast
     let rhsLastUsed = rhs.lastUsedAt ?? .distantPast
-    if lhsLastUsed != rhsLastUsed {
-        return lhsLastUsed > rhsLastUsed
-    }
-
-    return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+    return profileLastUsedComparator(
+        lhsLastUsedAt: lhsLastUsed,
+        lhsDisplayName: lhs.title,
+        rhsLastUsedAt: rhsLastUsed,
+        rhsDisplayName: rhs.title
+    )
 }
 
 private func makeSettingsAccountItem(

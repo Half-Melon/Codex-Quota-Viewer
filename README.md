@@ -2,12 +2,12 @@ English | [中文](README.zh-CN.md)
 
 # Codex Quota Viewer
 
-> Stable release: `1.0.3`
+> Stable release: `1.1.0`
 >
-> 1.0.3 update:
-> - Fixes the reusable quota RPC channel crash that could still happen during account switching and `Refresh All`.
-> - Cancels timed-out channel reads cleanly instead of probing `Process.terminationStatus` on an unsafe path.
-> - Keeps the saved-account batch refresh path stable when `app-server` output ends before the child process fully exits.
+> 1.1.0 update:
+> - Makes quota refresh and reusable RPC channel lifecycle more stable, and adds visible refresh progress in maintenance actions.
+> - Hardens safe account switching with better restore-point file coverage, thread/provider repair flow, and normalized profile path handling.
+> - Splits the Settings UI into dedicated views and localizes local-thread inspection messages for the released app.
 
 Codex Quota Viewer is a native macOS menu bar app for people who use Codex and
 want everything in one place: current quota, saved accounts, safe account

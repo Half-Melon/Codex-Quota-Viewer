@@ -108,7 +108,7 @@ func buildProviderProfile(
     quotaFetchedAt: Date? = nil
 ) -> ProviderProfile {
     let canonicalRuntimeMaterial = canonicalRuntimeMaterialForStorage(runtimeMaterial)
-    let summary = summarizeRuntimeConfig(canonicalRuntimeMaterial.configData)
+    let summary = parseRuntimeConfig(canonicalRuntimeMaterial.configData)
     let inferredAuthMode = snapshot?.account.type == "apiKey"
         ? CodexAuthMode.apiKey
         : resolveAuthMode(authData: canonicalRuntimeMaterial.authData)
@@ -123,7 +123,7 @@ func buildProviderProfile(
         displayName: displayName,
         source: source,
         runtimeMaterial: canonicalRuntimeMaterial,
-        authMode: inferredAuthMode == .unknown ? .chatgpt : inferredAuthMode,
+        authMode: inferredAuthMode,
         providerID: summary.providerID,
         threadProviderID: summary.threadProviderID,
         providerDisplayName: summary.providerName,

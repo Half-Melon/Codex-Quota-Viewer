@@ -7,7 +7,10 @@ enum LocalSQLiteQueryError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .sqliteUnavailable:
-            return "sqlite3 is required to inspect local thread metadata."
+            return AppLocalization.localized(
+                en: "sqlite3 is required to inspect local thread metadata.",
+                zh: "检查本地线程元数据需要 sqlite3。"
+            )
         case .queryFailed(let message):
             return message
         }
@@ -206,14 +209,24 @@ final class LocalThreadSyncInspector {
             do {
                 threadProviders = try stateThreadProviderCounts(databaseURL: store.stateDatabaseURL)
             } catch {
-                return .unavailable("State DB could not be read.")
+                return .unavailable(
+                    AppLocalization.localized(
+                        en: "State DB could not be read.",
+                        zh: "无法读取状态数据库。"
+                    )
+                )
             }
         } else {
             threadProviders = []
         }
 
         if rolloutProviders.isEmpty, threadProviders.isEmpty {
-            return .unavailable("No local threads found.")
+            return .unavailable(
+                AppLocalization.localized(
+                    en: "No local threads found.",
+                    zh: "未发现本地线程。"
+                )
+            )
         }
 
         let normalizedExpected = expectedProviderID?
@@ -225,7 +238,12 @@ final class LocalThreadSyncInspector {
                 .first?.providerID)
 
         guard let expected = candidateExpected else {
-            return .unavailable("Provider metadata is unavailable.")
+            return .unavailable(
+                AppLocalization.localized(
+                    en: "Provider metadata is unavailable.",
+                    zh: "无法获取 Provider 元数据。"
+                )
+            )
         }
 
         let rolloutMismatch = rolloutProviders.contains { $0.providerID != expected }
@@ -297,7 +315,13 @@ final class LocalThreadSyncInspector {
             let errorData = stderr.fileHandleForReading.readDataToEndOfFile()
             let errorText = String(data: errorData, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            throw LocalSQLiteQueryError.queryFailed(errorText ?? "Unknown sqlite error")
+            throw LocalSQLiteQueryError.queryFailed(
+                errorText
+                    ?? AppLocalization.localized(
+                        en: "Unknown sqlite error",
+                        zh: "未知 sqlite 错误"
+                    )
+            )
         }
 
         let outputData = stdout.fileHandleForReading.readDataToEndOfFile()

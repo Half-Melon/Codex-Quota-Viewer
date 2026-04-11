@@ -21,7 +21,7 @@ func currentRuntimeCaptureAction(
         return .skip
     }
 
-    if currentRuntimeSwitchFingerprint(for: canonicalExisting) == currentRuntimeSwitchFingerprint(for: canonicalCurrent) {
+    if currentRuntimeSwitchFingerprint(canonicalRuntime: canonicalExisting) == currentRuntimeSwitchFingerprint(canonicalRuntime: canonicalCurrent) {
         return .updateWithoutRestorePoint
     }
 
@@ -29,15 +29,14 @@ func currentRuntimeCaptureAction(
 }
 
 private func currentRuntimeSwitchFingerprint(
-    for runtimeMaterial: ProfileRuntimeMaterial
+    canonicalRuntime: ProfileRuntimeMaterial
 ) -> String {
-    let canonicalRuntime = canonicalRuntimeMaterialForStorage(runtimeMaterial)
     let authMode = resolveAuthMode(authData: canonicalRuntime.authData)
     let authFingerprint: String
 
     switch authMode {
     case .chatgpt, .apiKey:
-        authFingerprint = stableAccountIdentityKey(for: canonicalRuntime)
+        authFingerprint = stableAccountIdentityKey(forCanonicalRuntime: canonicalRuntime)
     case .unknown:
         authFingerprint = runtimeIdentityKey(authData: canonicalRuntime.authData)
     }
