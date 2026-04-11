@@ -89,7 +89,7 @@ final class SwitchOrchestrator {
             in: [store.sessionsRootURL, store.archivedSessionsRootURL],
             targetProvider: targetProviderID
         )
-        let filesToBackup = deduplicateURLs(
+        let filesToBackup = deduplicatedStandardizedFileURLs(
             store.protectedMutationFileURLs(
                 additionalFiles: rolloutFilesToUpdate + targetProfile.managedFileURLs
             )
@@ -156,7 +156,7 @@ final class SwitchOrchestrator {
     }
 
     func repairCurrentThreads() async throws -> RepairOperationResult {
-        let filesToBackup = deduplicateURLs(store.protectedMutationFileURLs())
+        let filesToBackup = deduplicatedStandardizedFileURLs(store.protectedMutationFileURLs())
         let previouslyRunning = try await desktopController.closeIfRunning()
         var restorePoint: RestorePointManifest?
 
@@ -192,7 +192,7 @@ final class SwitchOrchestrator {
         if let configData = targetProfile.runtimeMaterial.configData,
            let raw = String(data: configData, encoding: .utf8),
            !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let summary = summarizeRuntimeConfig(configData)
+            let summary = parseRuntimeConfig(configData)
             if summary.usesOpenAICompatibilityProvider {
                 return synthesizedOpenAICompatibleConfig(from: summary)
             }
@@ -220,7 +220,7 @@ final class SwitchOrchestrator {
         for targetProfile: ProviderProfile,
         effectiveConfigData: Data?
     ) throws -> String {
-        let configSummary = summarizeRuntimeConfig(effectiveConfigData)
+        let configSummary = parseRuntimeConfig(effectiveConfigData)
         if let providerID = configSummary.threadProviderID?
             .trimmingCharacters(in: .whitespacesAndNewlines),
            !providerID.isEmpty {
@@ -238,21 +238,6 @@ final class SwitchOrchestrator {
         }
 
         throw SwitchOrchestratorError.missingProviderIdentifier(targetProfile.displayName)
-    }
-
-    private func deduplicateURLs(_ files: [URL]) -> [URL] {
-        var seen = Set<String>()
-        var result: [URL] = []
-
-        for fileURL in files {
-            let standardizedURL = fileURL.standardizedFileURL
-            guard seen.insert(standardizedURL.path).inserted else {
-                continue
-            }
-            result.append(standardizedURL)
-        }
-
-        return result.sorted { $0.path < $1.path }
     }
 }
 

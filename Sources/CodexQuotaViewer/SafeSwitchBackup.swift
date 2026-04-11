@@ -63,10 +63,10 @@ struct DirectFileDataWriter: FileDataWriting {
 }
 
 final class ProtectedFileMutationContext: FileDataWriting {
-    private let allowedPaths: Set<String>
+    private let allowedPathKeys: Set<String>
 
     init(restorePoint: RestorePointManifest) {
-        allowedPaths = Set(restorePoint.files.map(\.originalPath))
+        allowedPathKeys = Set(restorePoint.files.map { Self.coverageKey(forPath: $0.originalPath) })
     }
 
     func write(_ data: Data, to url: URL) throws {
@@ -83,10 +83,23 @@ final class ProtectedFileMutationContext: FileDataWriting {
     }
 
     private func assertCovered(_ url: URL) throws {
-        let path = url.standardizedFileURL.path
-        guard allowedPaths.contains(path) else {
-            throw BackupManagerError.backupCoverageMissing(path)
+        let resolvedURL = url.standardizedFileURL.resolvingSymlinksInPath()
+        let displayPath = resolvedURL.path
+        let pathKey = Self.coverageKey(for: resolvedURL)
+        guard allowedPathKeys.contains(pathKey) else {
+            throw BackupManagerError.backupCoverageMissing(displayPath)
         }
+    }
+
+    private static func coverageKey(for url: URL) -> String {
+        url.standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
+            .lowercased()
+    }
+
+    private static func coverageKey(forPath path: String) -> String {
+        coverageKey(for: URL(fileURLWithPath: path))
     }
 }
 
@@ -136,7 +149,7 @@ final class BackupManager {
         try setPermissions(for: restorePointURL, value: privateDirectoryPermissions)
         try setPermissions(for: filesDirectoryURL, value: privateDirectoryPermissions)
 
-        let protectedFiles = deduplicatedPaths(files)
+        let protectedFiles = deduplicatedStandardizedFileURLs(files)
         var records: [RestorePointFileRecord] = []
 
         for (index, fileURL) in protectedFiles.enumerated() {
@@ -299,35 +312,25 @@ final class BackupManager {
     }
 
     private func pruneIfNeeded() throws {
-        let manifestURLs = try sortedRestorePointManifestURLs()
-        guard manifestURLs.count > maxRestorePoints else {
+        let restorePointURLs = try sortedRestorePointDirectoryURLs()
+        guard restorePointURLs.count > maxRestorePoints else {
             return
         }
 
-        for manifestURL in manifestURLs.dropFirst(maxRestorePoints) {
-            try? fileManager.removeItem(at: manifestURL.deletingLastPathComponent())
+        for restorePointURL in restorePointURLs.dropFirst(maxRestorePoints) {
+            try? fileManager.removeItem(at: restorePointURL)
         }
     }
 
     private func sortedRestorePointManifestURLs() throws -> [URL] {
-        let entries = try restorePointDirectoryURLs()
+        try sortedRestorePointDirectoryURLs().map {
+            $0.appendingPathComponent("manifest.json", isDirectory: false)
+        }
+    }
 
-        return entries
-            .map { directoryURL -> (URL, Date)? in
-                let manifestURL = directoryURL.appendingPathComponent("manifest.json", isDirectory: false)
-                guard let manifest = try? loadManifest(at: manifestURL) else {
-                    return nil
-                }
-                return (manifestURL, manifest.createdAt)
-            }
-            .compactMap { $0 }
-            .sorted {
-                if $0.1 == $1.1 {
-                    return $0.0.deletingLastPathComponent().lastPathComponent > $1.0.deletingLastPathComponent().lastPathComponent
-                }
-                return $0.1 > $1.1
-            }
-            .map(\.0)
+    private func sortedRestorePointDirectoryURLs() throws -> [URL] {
+        try restorePointDirectoryURLs()
+            .sorted { $0.lastPathComponent > $1.lastPathComponent }
     }
 
     private func restorePointDirectoryURLs() throws -> [URL] {
@@ -337,21 +340,6 @@ final class BackupManager {
             options: [.skipsHiddenFiles]
         )
         .filter { try $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true }
-    }
-
-    private func deduplicatedPaths(_ files: [URL]) -> [URL] {
-        var seen = Set<String>()
-        var result: [URL] = []
-
-        for url in files {
-            let standardizedURL = url.standardizedFileURL
-            guard seen.insert(standardizedURL.path).inserted else {
-                continue
-            }
-            result.append(standardizedURL)
-        }
-
-        return result.sorted { $0.path < $1.path }
     }
 
     private func sanitizedFileName(for url: URL) -> String {

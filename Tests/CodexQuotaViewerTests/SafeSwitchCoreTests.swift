@@ -79,6 +79,27 @@ func buildProviderProfileCanonicalizesOpenAICompatibleAPIProfileToOpenAI() throw
     }
 
 @Test
+func buildProviderProfilePreservesUnknownAuthModeWhenUnrecognized() throws {
+    let runtime = ProfileRuntimeMaterial(
+        authData: Data(#"{"auth_mode":"totally-unknown"}"#.utf8),
+        configData: nil
+    )
+
+    let profile = buildProviderProfile(
+        id: "unknown-auth",
+        fallbackDisplayName: "Unknown",
+        source: .vault,
+        runtimeMaterial: runtime,
+        snapshot: nil,
+        healthStatus: .healthy,
+        errorMessage: nil,
+        isCurrent: false
+    )
+
+    #expect(profile.authMode == .unknown)
+}
+
+@Test
 func statusEvaluatorBuildsLocalizedRepairRecommendation() {
     withExclusiveAppLocalization {
         AppLocalization.setPreferredLanguage(.zh, preferredLanguages: ["zh-Hans-CN"])
@@ -184,6 +205,199 @@ func backupManagerRejectsCorruptedRestorePointBeforeMutatingDestination() throws
             }
         }
         #expect(try Data(contentsOf: fileURL).utf8String() == "after")
+    }
+
+@Test
+func protectedFileMutationContextAcceptsCoveredPathsWithDifferentCase() throws {
+        let harness = try makeHarness()
+        let fileURL = harness.codexHomeURL.appendingPathComponent("auth.json", isDirectory: false)
+
+        try FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("before".utf8).write(to: fileURL, options: .atomic)
+
+        let manifest = RestorePointManifest(
+            id: "restore-point",
+            createdAt: Date(timeIntervalSince1970: 1_800_000_000),
+            reason: "test",
+            summary: "case-insensitive coverage",
+            codexWasRunning: false,
+            files: [
+                RestorePointFileRecord(
+                    originalPath: fileURL.standardizedFileURL.path.uppercased(),
+                    backupRelativePath: nil,
+                    exists: true,
+                    sha256: nil,
+                    fileSize: nil,
+                    modifiedAt: nil
+                )
+            ]
+        )
+
+        let context = ProtectedFileMutationContext(restorePoint: manifest)
+        try context.write(Data("after".utf8), to: fileURL)
+
+        #expect(try Data(contentsOf: fileURL).utf8String() == "after")
+    }
+
+@Test
+func deduplicatedStandardizedFileURLsRemovesDuplicatesAndSortsByPath() throws {
+        let harness = try makeHarness()
+        let root = harness.codexHomeURL.appendingPathComponent("dedupe", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let aURL = root.appendingPathComponent("a.txt", isDirectory: false)
+        let bURL = root.appendingPathComponent("b.txt", isDirectory: false)
+        try Data("a".utf8).write(to: aURL, options: .atomic)
+        try Data("b".utf8).write(to: bURL, options: .atomic)
+
+        let aVariant = URL(
+            fileURLWithPath: root
+                .appendingPathComponent("..", isDirectory: true)
+                .appendingPathComponent("dedupe", isDirectory: true)
+                .appendingPathComponent("a.txt", isDirectory: false)
+                .path,
+            isDirectory: false
+        )
+
+        let result = deduplicatedStandardizedFileURLs([bURL, aVariant, aURL, bURL])
+        let paths = result.map { $0.standardizedFileURL.path }
+
+        #expect(paths == paths.sorted())
+        #expect(Set(paths).count == paths.count)
+        #expect(paths == [aURL.standardizedFileURL.path, bURL.standardizedFileURL.path])
+}
+
+@Test
+func backupManagerDeduplicatesAndSortsProtectedFilesByPath() throws {
+        let harness = try makeHarness()
+        let backupRoot = harness.appSupportURL.appendingPathComponent("SwitchBackups", isDirectory: true)
+        let root = harness.codexHomeURL.appendingPathComponent("dedupe-backup", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let aURL = root.appendingPathComponent("a.txt", isDirectory: false)
+        let bURL = root.appendingPathComponent("b.txt", isDirectory: false)
+        try Data("a".utf8).write(to: aURL, options: .atomic)
+        try Data("b".utf8).write(to: bURL, options: .atomic)
+
+        let manager = BackupManager(backupsRootURL: backupRoot)
+        let manifest = try manager.createRestorePoint(
+            reason: "test dedupe",
+            summary: "dedupe",
+            files: [bURL, aURL, bURL],
+            codexWasRunning: false
+        )
+
+        let protectedPaths = manifest.files.map(\.originalPath)
+        #expect(protectedPaths == protectedPaths.sorted())
+        #expect(Set(protectedPaths).count == protectedPaths.count)
+        #expect(protectedPaths == [aURL.standardizedFileURL.path, bURL.standardizedFileURL.path])
+}
+
+@MainActor
+@Test
+func switchOrchestratorPreviewDeduplicatesAndSortsFilesToBackupByPath() async throws {
+        let harness = try makeHarness()
+        try seedCurrentRuntime(in: harness, provider: "legacy")
+
+        let extraRoot = harness.codexHomeURL.appendingPathComponent("dedupe-orchestrator", isDirectory: true)
+        try FileManager.default.createDirectory(at: extraRoot, withIntermediateDirectories: true)
+        let extraURL = extraRoot.appendingPathComponent("extra.txt", isDirectory: false)
+        try Data("x".utf8).write(to: extraURL, options: .atomic)
+        let extraVariant = URL(
+            fileURLWithPath: extraRoot
+                .appendingPathComponent("..", isDirectory: true)
+                .appendingPathComponent("dedupe-orchestrator", isDirectory: true)
+                .appendingPathComponent("extra.txt", isDirectory: false)
+                .path,
+            isDirectory: false
+        )
+
+        let repairer = RepairerSpy()
+        let desktop = DesktopControllerSpy(isRunning: false)
+        let orchestrator = makeOrchestrator(
+            harness: harness,
+            repairer: repairer,
+            desktop: desktop
+        )
+
+        let target = ProviderProfile(
+            id: "target-openai",
+            displayName: "Target OpenAI",
+            source: .vault,
+            runtimeMaterial: ProfileRuntimeMaterial(
+                authData: Data("{\"auth_mode\":\"chatgpt\"}".utf8),
+                configData: Data("model_provider = \"openai\"\n".utf8)
+            ),
+            authMode: .chatgpt,
+            providerID: "openai",
+            providerDisplayName: "OpenAI",
+            baseURLHost: nil,
+            model: nil,
+            snapshot: nil,
+            healthStatus: .healthy,
+            errorMessage: nil,
+            isCurrent: false,
+            managedFileURLs: [extraURL, extraVariant]
+        )
+
+        let preview = try orchestrator.preview(targetProfile: target)
+        let paths = preview.filesToBackup.map { $0.standardizedFileURL.path }
+
+        #expect(paths == paths.sorted())
+        #expect(Set(paths).count == paths.count)
+        #expect(paths.filter { $0 == extraURL.standardizedFileURL.path }.count == 1)
+}
+
+@Test
+func backupManagerPruneDoesNotDependOnManifestLoadToOrderRestorePoints() throws {
+        let harness = try makeHarness()
+        let backupRoot = harness.appSupportURL.appendingPathComponent("SwitchBackups", isDirectory: true)
+        let fileURL = harness.codexHomeURL.appendingPathComponent("auth.json", isDirectory: false)
+
+        try FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("seed".utf8).write(to: fileURL, options: .atomic)
+
+        let manager = BackupManager(backupsRootURL: backupRoot)
+
+        // Fill up to the max restore point limit (20).
+        for index in 0..<20 {
+            _ = try manager.createRestorePoint(
+                reason: "test prune \(index)",
+                summary: "seed",
+                files: [fileURL],
+                codexWasRunning: false
+            )
+        }
+
+        // Add an extra (very old) restore point directory that is missing its manifest.json.
+        // If pruning depends on loading manifests to sort/decide what to delete, this directory will be ignored and leak.
+        let corruptedID = "19990101-000000-000-deadbeef"
+        let corruptedURL = backupRoot.appendingPathComponent(corruptedID, isDirectory: true)
+        try FileManager.default.createDirectory(at: corruptedURL, withIntermediateDirectories: true)
+
+        // Create one more restore point to exceed the limit and trigger pruning.
+        _ = try manager.createRestorePoint(
+            reason: "trigger prune",
+            summary: "seed",
+            files: [fileURL],
+            codexWasRunning: false
+        )
+
+        let restorePointDirectories = try FileManager.default.contentsOfDirectory(
+            at: backupRoot,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )
+        .filter { try $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true }
+
+        #expect(restorePointDirectories.count == 20)
+        #expect(FileManager.default.fileExists(atPath: corruptedURL.path) == false)
     }
 
 @Test

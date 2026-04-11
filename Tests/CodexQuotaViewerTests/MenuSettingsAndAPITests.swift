@@ -82,6 +82,36 @@ func settingsAccountSectionsGroupAndSortAccountsForHumanScanning() {
 }
 
 @Test
+func profileLastUsedComparatorPrefersMostRecentUsageThenTitle() {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+    #expect(
+        profileLastUsedComparator(
+            lhsLastUsedAt: now,
+            lhsDisplayName: "zeta@example.com",
+            rhsLastUsedAt: now.addingTimeInterval(-10),
+            rhsDisplayName: "alpha@example.com"
+        )
+    )
+    #expect(
+        profileLastUsedComparator(
+            lhsLastUsedAt: now,
+            lhsDisplayName: "alpha@example.com",
+            rhsLastUsedAt: now,
+            rhsDisplayName: "beta@example.com"
+        )
+    )
+    #expect(
+        profileLastUsedComparator(
+            lhsLastUsedAt: nil,
+            lhsDisplayName: "alpha@example.com",
+            rhsLastUsedAt: nil,
+            rhsDisplayName: "beta@example.com"
+        )
+    )
+}
+
+@Test
 func settingsAccountSectionsIncludeLocalizedHealthHints() {
     withExclusiveAppLocalization {
         AppLocalization.setPreferredLanguage(.en, preferredLanguages: ["en-US"])
@@ -338,6 +368,29 @@ func quotaOverviewMenuRowsUseCustomViewAndShowDualQuotaColumns() throws {
 
 @MainActor
 @Test
+func maintenanceMenuRefreshItemShowsProgressCountsWhenAvailable() {
+    withExclusiveAppLocalization {
+        AppLocalization.setPreferredLanguage(.en, preferredLanguages: ["en-US"])
+        let maintenance = buildMaintenanceMenu(
+            isRefreshing: true,
+            refreshProgress: RefreshProgress(completedCount: 3, totalCount: 8),
+            isLaunchingSessionManager: false,
+            isPerformingSafeSwitchOperation: false,
+            hasRollbackRestorePoint: true,
+            target: nil,
+            refreshAction: #selector(NSResponder.cancelOperation(_:)),
+            manageSessionsAction: #selector(NSResponder.cancelOperation(_:)),
+            repairAction: #selector(NSResponder.cancelOperation(_:)),
+            rollbackAction: #selector(NSResponder.cancelOperation(_:))
+        )
+
+        #expect(maintenance.items.first?.title == "Refreshing 3/8…")
+        #expect(maintenance.items.first?.isEnabled == false)
+    }
+}
+
+@MainActor
+@Test
 func quotaOverviewMenuRowsPadWeeklyOnlyAccountsWithFiveHourPlaceholder() throws {
     try withExclusiveAppLocalization {
         AppLocalization.setPreferredLanguage(.en, preferredLanguages: ["en-US"])
@@ -516,9 +569,114 @@ func menuItemBuilderProducesStandardQuotaAndMaintenanceMenuItems() {
 
 @MainActor
 @Test
+func quotaOverviewMenuItemsReuseExistingRowViewsWhenShapeMatches() throws {
+    try withExclusiveAppLocalization {
+        AppLocalization.setPreferredLanguage(.en, preferredLanguages: ["en-US"])
+        let now = Date(timeIntervalSince1970: 1_800_000_240)
+        let current = makeTestProviderProfile(
+            id: "current",
+            displayName: "current@example.com",
+            authMode: .chatgpt,
+            snapshot: makeTestSnapshot(
+                email: "current@example.com",
+                primaryRemaining: 81,
+                secondaryRemaining: 79,
+                fetchedAt: now
+            ),
+            isCurrent: true,
+            lastUsedAt: now
+        )
+        let other = makeTestProviderProfile(
+            id: "other",
+            displayName: "other@example.com",
+            authMode: .chatgpt,
+            snapshot: makeTestSnapshot(
+                email: "other@example.com",
+                primaryRemaining: 77,
+                secondaryRemaining: 73,
+                fetchedAt: now
+            ),
+            isCurrent: false,
+            lastUsedAt: now.addingTimeInterval(-20)
+        )
+        let initialState = buildQuotaOverviewState(
+            currentProfile: current,
+            vaultProfiles: [other],
+            refreshIntervalPreset: .fiveMinutes,
+            now: now
+        )
+        let updatedCurrent = makeTestProviderProfile(
+            id: "current",
+            displayName: "current@example.com",
+            authMode: .chatgpt,
+            snapshot: makeTestSnapshot(
+                email: "current@example.com",
+                primaryRemaining: 64,
+                secondaryRemaining: 52,
+                fetchedAt: now.addingTimeInterval(60)
+            ),
+            isCurrent: true,
+            lastUsedAt: now.addingTimeInterval(60)
+        )
+        let updatedOther = makeTestProviderProfile(
+            id: "other",
+            displayName: "other@example.com",
+            authMode: .chatgpt,
+            snapshot: makeTestSnapshot(
+                email: "other@example.com",
+                primaryRemaining: 71,
+                secondaryRemaining: 69,
+                fetchedAt: now.addingTimeInterval(60)
+            ),
+            isCurrent: false,
+            lastUsedAt: now.addingTimeInterval(40)
+        )
+        let updatedState = buildQuotaOverviewState(
+            currentProfile: updatedCurrent,
+            vaultProfiles: [updatedOther],
+            refreshIntervalPreset: .fiveMinutes,
+            now: now.addingTimeInterval(60)
+        )
+
+        let items = buildQuotaOverviewMenuItems(
+            quotaOverviewState: initialState,
+            refreshIntervalPreset: .fiveMinutes,
+            isPerformingSafeSwitchOperation: false,
+            target: nil,
+            activateSavedAccountAction: #selector(NSResponder.cancelOperation(_:))
+        )
+        let firstRowView = try #require(items.first?.view as? AccountMenuRowView)
+
+        let didReuse = reconcileQuotaOverviewMenuItemsInPlace(
+            items,
+            quotaOverviewState: updatedState,
+            refreshIntervalPreset: .fiveMinutes,
+            isPerformingSafeSwitchOperation: false,
+            target: nil,
+            activateSavedAccountAction: #selector(NSResponder.cancelOperation(_:))
+        )
+
+        let updatedRowView = try #require(items.first?.view as? AccountMenuRowView)
+        #expect(didReuse)
+        #expect(updatedRowView === firstRowView)
+        #expect(findLabel(in: updatedRowView) { $0 == "5h 64%" } != nil)
+        #expect(findLabel(in: updatedRowView) { $0 == "1w 52%" } != nil)
+    }
+}
+
+@MainActor
+@Test
 func settingsWindowCoordinatorBuildsPanelStateBeforeForwardingToPresenter() {
-    let presenter = SettingsPresenterSpy()
-    let coordinator = SettingsWindowCoordinator(presenter: presenter)
+    let controller = SettingsWindowControllerSpy()
+    var createdSettings: AppSettings?
+    var createdPanelState: SettingsAccountPanelState?
+    let coordinator = SettingsWindowCoordinator(
+        controllerFactory: { settings, accountPanelState in
+            createdSettings = settings
+            createdPanelState = accountPanelState
+            return controller
+        }
+    )
     let now = Date(timeIntervalSince1970: 1_800_000_260)
     let current = makeTestProviderProfile(
         id: "current",
@@ -546,10 +704,8 @@ func settingsWindowCoordinatorBuildsPanelStateBeforeForwardingToPresenter() {
     )
 
     coordinator.update(state: presentationState)
-
-    #expect(presenter.lastUpdatedSettings != nil)
-    #expect(presenter.lastUpdatedPanelState?.actionsEnabled == false)
-    #expect(presenter.lastUpdatedPanelState?.sections.first?.items.first?.isCurrent == true)
+    #expect(controller.lastUpdatedSettings == nil)
+    #expect(controller.lastUpdatedPanelState == nil)
 
     let becameVisible = coordinator.show(
         state: presentationState,
@@ -566,7 +722,63 @@ func settingsWindowCoordinatorBuildsPanelStateBeforeForwardingToPresenter() {
     )
 
     #expect(becameVisible == true)
-    #expect(presenter.showCallCount == 1)
+    #expect(controller.showCallCount == 1)
+    #expect(createdSettings != nil)
+    #expect(createdPanelState?.actionsEnabled == false)
+    #expect(createdPanelState?.sections.first?.items.first?.isCurrent == true)
+    #expect(coordinator.isVisible == true)
+}
+
+@MainActor
+@Test
+func settingsWindowCoordinatorRefreshesCallbacksOnRepeatedPresentation() {
+    let controller = SettingsWindowControllerSpy()
+    let coordinator = SettingsWindowCoordinator(
+        controllerFactory: { _, _ in controller }
+    )
+    let panelState = SettingsAccountPanelState(
+        importStatusText: "",
+        sections: [],
+        actionsEnabled: true
+    )
+
+    var called: [String] = []
+
+    _ = coordinator.show(
+        settings: AppSettings(),
+        accountPanelState: panelState,
+        callbacks: SettingsPresenterCallbacks(
+            onSettingsChanged: { _ in },
+            onAddChatGPTAccount: {},
+            onAddAPIAccount: { called.append("old") },
+            onActivateAccount: { _ in },
+            onRenameAccount: { _ in },
+            onForgetAccount: { _ in },
+            onOpenVaultFolder: {},
+            onWindowClosed: {}
+        )
+    )
+
+    _ = coordinator.show(
+        settings: AppSettings(),
+        accountPanelState: panelState,
+        callbacks: SettingsPresenterCallbacks(
+            onSettingsChanged: { _ in },
+            onAddChatGPTAccount: {},
+            onAddAPIAccount: { called.append("new") },
+            onActivateAccount: { _ in },
+            onRenameAccount: { _ in },
+            onForgetAccount: { _ in },
+            onOpenVaultFolder: {},
+            onWindowClosed: {}
+        )
+    )
+
+    controller.onAddAPIAccount?()
+
+    #expect(controller.showCallCount == 2)
+    #expect(controller.updateCallCount == 1)
+    #expect(called == ["new"])
     #expect(coordinator.isVisible == true)
 }
 
@@ -597,6 +809,70 @@ func foregroundPresentationControllerBalancesActivationPolicyAndVisibility() {
     isPrimaryWindowVisible = false
     controller.endIfPossible()
     #expect(appliedPolicies == [.regular, .regular, .accessory])
+}
+
+@MainActor
+@Test
+func settingsPresenterShowRefreshesCallbacksOnRepeatedPresentation() throws {
+    let presenter = SettingsPresenter()
+    let panelState = SettingsAccountPanelState(
+        importStatusText: "",
+        sections: [],
+        actionsEnabled: true
+    )
+
+    var called: [String] = []
+
+    presenter.show(
+        settings: AppSettings(),
+        accountPanelState: panelState,
+        callbacks: SettingsPresenterCallbacks(
+            onSettingsChanged: { _ in },
+            onAddChatGPTAccount: {},
+            onAddAPIAccount: { called.append("old") },
+            onActivateAccount: { _ in },
+            onRenameAccount: { _ in },
+            onForgetAccount: { _ in },
+            onOpenVaultFolder: {},
+            onWindowClosed: {}
+        )
+    )
+
+    presenter.show(
+        settings: AppSettings(),
+        accountPanelState: panelState,
+        callbacks: SettingsPresenterCallbacks(
+            onSettingsChanged: { _ in },
+            onAddChatGPTAccount: {},
+            onAddAPIAccount: { called.append("new") },
+            onActivateAccount: { _ in },
+            onRenameAccount: { _ in },
+            onForgetAccount: { _ in },
+            onOpenVaultFolder: {},
+            onWindowClosed: {}
+        )
+    )
+
+    let controller = try #require(extractSettingsPresenterController(presenter))
+    controller.onAddAPIAccount?()
+
+    #expect(called == ["new"])
+}
+
+@MainActor
+@Test
+func settingsWindowControllerUsesDedicatedTabViews() throws {
+    let controller = SettingsWindowController(
+        settings: AppSettings(),
+        accountPanelState: SettingsAccountPanelState(importStatusText: "", sections: [], actionsEnabled: true)
+    )
+
+    let contentView = try #require(controller.window?.contentView)
+    let tabView = try #require(findView(ofType: NSTabView.self, in: contentView))
+
+    #expect(tabView.tabViewItems.count == 2)
+    #expect(tabView.tabViewItems[0].view is SettingsGeneralView)
+    #expect(tabView.tabViewItems[1].view is SettingsAccountsView)
 }
 
 @MainActor
@@ -903,6 +1179,20 @@ private func findView<T: NSView>(ofType type: T.Type, in root: NSView) -> T? {
 }
 
 @MainActor
+private func extractSettingsPresenterController(_ presenter: SettingsPresenter) -> SettingsWindowController? {
+    // `SettingsPresenter.controller` is `private`, so use reflection for this narrow behavior test.
+    let presenterMirror = Mirror(reflecting: presenter)
+    for child in presenterMirror.children {
+        guard child.label == "controller" else { continue }
+        let optionalMirror = Mirror(reflecting: child.value)
+        guard optionalMirror.displayStyle == .optional else { return nil }
+        guard let some = optionalMirror.children.first else { return nil }
+        return some.value as? SettingsWindowController
+    }
+    return nil
+}
+
+@MainActor
 private func isDescendant(_ view: NSView, of ancestor: NSView) -> Bool {
     var currentView = view.superview
     while currentView != nil {
@@ -969,5 +1259,42 @@ private final class SettingsPresenterSpy: SettingsWindowPresenting {
         isVisible = true
         lastUpdatedSettings = settings
         lastUpdatedPanelState = accountPanelState
+    }
+}
+
+@MainActor
+private final class SettingsWindowControllerSpy: SettingsWindowControlling {
+    var onSettingsChanged: ((AppSettings) -> Void)?
+    var onAddChatGPTAccount: (() -> Void)?
+    var onAddAPIAccount: (() -> Void)?
+    var onActivateAccount: ((String) -> Void)?
+    var onRenameAccount: ((String) -> Void)?
+    var onForgetAccount: ((String) -> Void)?
+    var onOpenVaultFolder: (() -> Void)?
+    var onWindowClosed: (() -> Void)?
+
+    let window: NSWindow? = NSWindow()
+    var showCallCount = 0
+    var updateCallCount = 0
+    var lastUpdatedSettings: AppSettings?
+    var lastUpdatedPanelState: SettingsAccountPanelState?
+    private var visible = false
+
+    var isVisible: Bool {
+        visible
+    }
+
+    func update(
+        settings: AppSettings,
+        accountPanelState: SettingsAccountPanelState
+    ) {
+        updateCallCount += 1
+        lastUpdatedSettings = settings
+        lastUpdatedPanelState = accountPanelState
+    }
+
+    func showWindow(_ sender: Any?) {
+        showCallCount += 1
+        visible = true
     }
 }

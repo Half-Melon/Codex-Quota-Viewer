@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import Testing
 
 @testable import CodexQuotaViewer
@@ -235,4 +236,77 @@ func codexRPCChannelReturnsInvalidResponseWhenOutputEndsBeforeProcessExits() asy
     } catch let error as CodexRPCError {
         #expect(error == .invalidResponse("app-server exited early."))
     }
+}
+
+@Test
+func codexRPCChannelDeinitCleansUpProcessAndTemporaryHomeWithoutExplicitInvalidate() throws {
+    let scriptRoot = FileManager.default.temporaryDirectory
+        .appendingPathComponent("CodexRPCClientTests-DeinitCleanup-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: scriptRoot, withIntermediateDirectories: true)
+
+    let homePathURL = scriptRoot.appendingPathComponent("home.txt", isDirectory: false)
+    let pidPathURL = scriptRoot.appendingPathComponent("pid.txt", isDirectory: false)
+
+    let scriptURL = try makeExecutableScript(
+        contents: """
+        #!/bin/zsh
+        set -euo pipefail
+        echo "$HOME" > "\(homePathURL.path)"
+        echo "$$" > "\(pidPathURL.path)"
+        trap 'exit 0' TERM
+        sleep 600
+        """
+    )
+
+    func waitForFile(_ url: URL, timeout: TimeInterval) throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if FileManager.default.fileExists(atPath: url.path) {
+                return
+            }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        throw CodexRPCError.timeout
+    }
+
+    let runtime = makeTestRuntimeMaterial(id: "deinit-cleanup", authMode: .chatgpt)
+    var channel: CodexRPCChannel? = try CodexRPCChannel.make(
+        runtimeMaterial: runtime,
+        launchConfiguration: (executableURL: scriptURL, arguments: [])
+    )
+    #expect(channel != nil)
+
+    try waitForFile(homePathURL, timeout: 5)
+    try waitForFile(pidPathURL, timeout: 5)
+
+    let tempHomePath = try String(contentsOf: homePathURL, encoding: .utf8)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    let pidString = try String(contentsOf: pidPathURL, encoding: .utf8)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    let pid = pid_t(pidString) ?? 0
+
+    defer {
+        if pid > 0 {
+            _ = kill(pid, SIGKILL)
+        }
+        try? FileManager.default.removeItem(at: scriptRoot)
+        try? FileManager.default.removeItem(at: scriptURL.deletingLastPathComponent())
+    }
+
+    channel = nil
+
+    let cleanupDeadline = Date().addingTimeInterval(3)
+    while Date() < cleanupDeadline {
+        let exists = FileManager.default.fileExists(atPath: tempHomePath)
+        let isAlive = (pid > 0) ? (kill(pid, 0) == 0) : false
+        if !exists && !isAlive {
+            break
+        }
+        Thread.sleep(forTimeInterval: 0.01)
+    }
+
+    #expect(FileManager.default.fileExists(atPath: tempHomePath) == false)
+    #expect(pid > 0)
+    #expect(kill(pid, 0) != 0)
+    #expect(errno == ESRCH)
 }

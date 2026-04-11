@@ -82,51 +82,6 @@ func resolveProfileIndicatorKind(
 
 @MainActor
 final class AppController: NSObject, NSMenuDelegate {
-    private enum ProfileRefreshIntent: Equatable {
-        case currentOnly
-        case menuOpenSelective(refreshCurrentAccount: Bool)
-        case manualFull
-
-        var shouldRefreshCurrentAccount: Bool {
-            switch self {
-            case .currentOnly:
-                return true
-            case .menuOpenSelective(let refreshCurrentAccount):
-                return refreshCurrentAccount
-            case .manualFull:
-                return true
-            }
-        }
-
-        func refreshPolicy(
-            refreshIntervalPreset: RefreshIntervalPreset
-        ) -> VaultQuotaRefreshCoordinator.RefreshPolicy {
-            switch self {
-            case .currentOnly:
-                return .currentOnly
-            case .menuOpenSelective:
-                return .menuOpenSelective(staleAfter: staleThreshold(for: refreshIntervalPreset))
-            case .manualFull:
-                return .manualFull
-            }
-        }
-
-        func merged(with other: Self) -> Self {
-            switch (self, other) {
-            case (.currentOnly, .currentOnly):
-                return .currentOnly
-            case (.manualFull, _), (_, .manualFull):
-                return .manualFull
-            case (.menuOpenSelective(let refreshCurrentAccount), .currentOnly):
-                return .menuOpenSelective(refreshCurrentAccount: refreshCurrentAccount)
-            case (.currentOnly, .menuOpenSelective(let refreshCurrentAccount)):
-                return .menuOpenSelective(refreshCurrentAccount: refreshCurrentAccount)
-            case (.menuOpenSelective(let lhs), .menuOpenSelective(let rhs)):
-                return .menuOpenSelective(refreshCurrentAccount: lhs || rhs)
-            }
-        }
-    }
-
     private let store = ProfileStore()
     private lazy var vaultStore = VaultAccountStore(
         accountsRootURL: store.accountsRootURL,
@@ -217,32 +172,28 @@ final class AppController: NSObject, NSMenuDelegate {
     private let menu = NSMenu()
 
     private var settings = AppSettings()
-    private var currentSnapshot: CodexSnapshot?
-    private var currentHealthStatus: ProfileHealthStatus?
-    private var currentError: String?
-    private var currentProviderProfile: ProviderProfile?
-    private var vaultSnapshot: AccountVaultSnapshot?
     private var vaultProfiles: [ProviderProfile] = []
     private var availableSwitchTargets: [ProviderProfile] = []
     private var quotaOverviewState: QuotaOverviewState?
-    private var vaultQuotaRecords: [String: VaultQuotaSnapshotRecord] = [:]
     private var safeSwitchCenterState: SafeSwitchCenterState?
     private var statusNotice: MenuNotice?
     private var loadWarningNotice: String?
     private var localizationNotice: MenuNotice?
-    private var refreshState = RefreshRequestState()
-    private var pendingRefreshIntent: ProfileRefreshIntent?
     private var isLaunchingSessionManager = false
     private var foregroundOperationState = ForegroundOperationState()
-    private var lastRefreshAt: Date?
-    private var refreshTimer: Timer?
     private var cachedThreadSyncStatus: LocalThreadSyncStatus?
     private let settingsWindowCoordinator = SettingsWindowCoordinator()
     private var menuTrackingGate = MenuTrackingGate()
     private var pendingMenuRefreshReason: String?
     private var deferredMenuPresentations = DeferredMenuPresentationQueue()
-    private var pendingVaultPresentationRefresh: DispatchWorkItem?
-    private lazy var transientMenuNotices = TransientMenuNoticeController { [weak self] in
+    private lazy var transientMenuNotices = TransientMenuNoticeController(
+        operationStateProvider: { [weak self] in
+            (
+                isForegroundOperationActive: self?.isPerformingSafeSwitchOperation ?? false,
+                isLaunchingSessionManager: self?.isLaunchingSessionManager ?? false
+            )
+        }
+    ) { [weak self] in
         self?.rebuildMenu(reason: "notice-expired")
     }
     private lazy var foregroundPresentationController = ForegroundPresentationController(
@@ -250,6 +201,80 @@ final class AppController: NSObject, NSMenuDelegate {
             self?.settingsWindowCoordinator.isVisible ?? false
         }
     )
+    private lazy var profileRefreshController = ProfileRefreshController(
+        store: store,
+        vaultStore: vaultStore,
+        currentSnapshotFetcher: currentSnapshotFetcher,
+        vaultBootstrapCoordinator: vaultBootstrapCoordinator,
+        quotaRefreshCoordinator: quotaRefreshCoordinator,
+        quotaCacheStore: quotaCacheStore,
+        settingsProvider: { [weak self] in
+            self?.settings ?? AppSettings()
+        },
+        saveSettings: { [store] settings, writer in
+            try store.saveSettings(settings, writer: writer)
+        },
+        applySettings: { [weak self] settings in
+            self?.settings = settings
+        },
+        currentProfileBuilder: { [weak self] runtimeMaterial, snapshot, healthStatus, errorMessage, lastRefreshAt in
+            self?.makeCurrentProviderProfile(
+                currentRuntimeMaterial: runtimeMaterial,
+                snapshot: snapshot,
+                healthStatus: healthStatus,
+                errorMessage: errorMessage,
+                lastRefreshAt: lastRefreshAt
+            )
+        },
+        localizedErrorNotice: { [weak self] kind, en, zh, error in
+            self?.localizedErrorNotice(kind: kind, en: en, zh: zh, error: error)
+                ?? MenuNotice(kind: kind, message: userFacingErrorMessage(error))
+        },
+        userFacingMessage: { [weak self] error in
+            self?.userFacingMessage(for: error) ?? userFacingErrorMessage(error)
+        },
+        presentSafeSwitchNotice: { [weak self] notice, lifetime in
+            self?.presentSafeSwitchNotice(notice, lifetime: lifetime)
+        },
+        setStatusNotice: { [weak self] notice in
+            self?.statusNotice = notice
+        },
+        onStateChanged: { [weak self] in
+            self?.refreshPresentationFromProfileRefreshController()
+        }
+    )
+
+    private var currentSnapshot: CodexSnapshot? {
+        profileRefreshController.currentSnapshot
+    }
+
+    private var currentHealthStatus: ProfileHealthStatus? {
+        profileRefreshController.currentHealthStatus
+    }
+
+    private var currentError: String? {
+        profileRefreshController.currentError
+    }
+
+    private var currentProviderProfile: ProviderProfile? {
+        profileRefreshController.currentProviderProfile
+    }
+
+    private var vaultSnapshot: AccountVaultSnapshot? {
+        profileRefreshController.vaultSnapshot
+    }
+
+    private var vaultQuotaRecords: [String: VaultQuotaSnapshotRecord] {
+        profileRefreshController.vaultQuotaRecords
+    }
+
+    private var lastRefreshAt: Date? {
+        profileRefreshController.lastRefreshAt
+    }
+
+    private var refreshProgress: RefreshProgress? {
+        profileRefreshController.refreshProgress
+    }
 
     func start() {
         menu.autoenablesItems = false
@@ -260,11 +285,10 @@ final class AppController: NSObject, NSMenuDelegate {
         loadReadOnlyState()
         synchronizeLocalizationState()
         let currentRuntimeMaterial = try? store.currentRuntimeMaterial()
-        currentProviderProfile = makeCurrentProviderProfile(currentRuntimeMaterial: currentRuntimeMaterial)
-        refreshVaultProfiles(currentRuntimeMaterial: currentRuntimeMaterial, scheduleQuotaRefresh: false)
+        profileRefreshController.prepareInitialState(currentRuntimeMaterial: currentRuntimeMaterial)
         applySettingsSideEffects(showErrorsInStatus: false)
         rebuildMenu()
-        refreshCurrentProfileOnly()
+        profileRefreshController.refreshCurrentProfileOnly()
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -298,9 +322,9 @@ final class AppController: NSObject, NSMenuDelegate {
         var issues = settingsResult.issues.map(\.message)
         do {
             let cachedRecords = try quotaCacheStore.load()
-            vaultQuotaRecords = Dictionary(uniqueKeysWithValues: cachedRecords.map { ($0.accountID, $0) })
+            profileRefreshController.replaceCachedQuotaRecords(cachedRecords)
         } catch {
-            vaultQuotaRecords = [:]
+            profileRefreshController.replaceCachedQuotaRecords([])
             issues.append(
                 AppLocalization.localized(
                     en: "Quota cache is corrupted: \(store.quotaCacheURL.lastPathComponent)",
@@ -315,10 +339,11 @@ final class AppController: NSObject, NSMenuDelegate {
 
     private func applySettingsSideEffects(showErrorsInStatus: Bool) {
         synchronizeLocalizationState()
-        scheduleRefreshTimer()
+        profileRefreshController.scheduleRefreshTimer()
         do {
             try launchAtLoginManager.sync(enabled: settings.launchAtLoginEnabled)
         } catch {
+            AppLog.settings.error("Launch-at-login sync failed: \(self.userFacingMessage(for: error), privacy: .public)")
             if showErrorsInStatus {
                 statusNotice = MenuNotice(kind: .error, message: userFacingMessage(for: error))
             }
@@ -343,98 +368,22 @@ final class AppController: NSObject, NSMenuDelegate {
         settingsWindowCoordinator.update(state: currentSettingsWindowPresentationState())
     }
 
-    private func scheduleRefreshTimer() {
-        refreshTimer?.invalidate()
-        refreshTimer = nil
-
-        guard let interval = settings.refreshIntervalPreset.interval else {
-            return
-        }
-
-        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.refreshCurrentProfileOnly()
-            }
-        }
-        refreshTimer = timer
-        RunLoop.main.add(timer, forMode: .common)
+    private func refreshPresentationFromProfileRefreshController(now: Date = Date()) {
+        invalidateCachedThreadSyncStatusIfNeeded()
+        rebuildVaultPresentation(currentRuntimeMaterial: profileRefreshController.currentRuntimeMaterial)
+        applyVaultPresentationStateUpdates(now: now)
     }
 
     private func refreshCurrentProfileOnly() {
-        performProfileRefresh(.currentOnly)
+        profileRefreshController.refreshCurrentProfileOnly()
     }
 
     private func refreshSavedAccountsOnMenuOpen() {
-        performProfileRefresh(
-            .menuOpenSelective(
-                refreshCurrentAccount: shouldAutoRefreshWhenMenuOpens(settings.refreshIntervalPreset)
-            )
-        )
+        profileRefreshController.refreshSavedAccountsOnMenuOpen()
     }
 
     private func refreshAllProfiles() {
-        performProfileRefresh(.manualFull)
-    }
-
-    private func performProfileRefresh(_ intent: ProfileRefreshIntent) {
-        guard refreshState.begin() else {
-            pendingRefreshIntent = pendingRefreshIntent?.merged(with: intent) ?? intent
-            return
-        }
-        pendingRefreshIntent = nil
-
-        if intent.shouldRefreshCurrentAccount {
-            currentError = nil
-            currentHealthStatus = currentSnapshot == nil ? nil : .healthy
-        }
-        updateStatusTitle()
-        rebuildMenu(reason: "refresh-begin")
-
-        Task {
-            defer {
-                let nextIntent = pendingRefreshIntent
-                pendingRefreshIntent = nil
-                let shouldRefreshAgain = refreshState.finish()
-                updateStatusTitle()
-                rebuildMenu(reason: "refresh-end")
-                if shouldRefreshAgain {
-                    performProfileRefresh(nextIntent ?? intent)
-                }
-            }
-
-            let currentRuntimeMaterial = try? store.currentRuntimeMaterial()
-
-            if intent.shouldRefreshCurrentAccount {
-                do {
-                    currentSnapshot = try await currentSnapshotFetcher.fetch(
-                        currentRuntimeMaterial: currentRuntimeMaterial,
-                        codexHomeURL: store.currentAuthURL.deletingLastPathComponent()
-                    )
-                    currentHealthStatus = .healthy
-                } catch {
-                    currentSnapshot = nil
-                    currentHealthStatus = classifyProfileHealth(from: error)
-                    currentError = userFacingMessage(for: error)
-                }
-
-                lastRefreshAt = Date()
-                currentProviderProfile = makeCurrentProviderProfile(currentRuntimeMaterial: currentRuntimeMaterial)
-                invalidateCachedThreadSyncStatusIfNeeded()
-                bootstrapVaultAccounts(currentRuntimeMaterial: currentRuntimeMaterial)
-                updateStatusTitle()
-                rebuildMenu(reason: "refresh-current")
-            } else {
-                currentProviderProfile = makeCurrentProviderProfile(currentRuntimeMaterial: currentRuntimeMaterial)
-                invalidateCachedThreadSyncStatusIfNeeded()
-            }
-
-            refreshVaultProfiles(
-                currentRuntimeMaterial: currentRuntimeMaterial,
-                scheduleQuotaRefresh: true,
-                refreshPolicy: intent.refreshPolicy(refreshIntervalPreset: settings.refreshIntervalPreset),
-                reloadSnapshot: intent.shouldRefreshCurrentAccount
-            )
-        }
+        profileRefreshController.refreshAllProfiles()
     }
 
     private func rebuildMenu(force: Bool = false, reason: String? = nil) {
@@ -446,6 +395,9 @@ final class AppController: NSObject, NSMenuDelegate {
         }
 
         pendingMenuRefreshReason = nil
+        if updateMenuInPlaceIfPossible() {
+            return
+        }
         menu.removeAllItems()
 
         if let notice = visibleMenuNotice() {
@@ -476,6 +428,48 @@ final class AppController: NSObject, NSMenuDelegate {
         )
     }
 
+    private func updateMenuInPlaceIfPossible() -> Bool {
+        guard visibleMenuNotice() == nil,
+              let quotaSectionEndIndex = menu.items.firstIndex(where: \.isSeparatorItem),
+              menu.items.count == quotaSectionEndIndex + 4 else {
+            return false
+        }
+
+        let quotaItems = Array(menu.items[..<quotaSectionEndIndex])
+        guard reconcileQuotaOverviewMenuItemsInPlace(
+            quotaItems,
+            quotaOverviewState: quotaOverviewState,
+            refreshIntervalPreset: settings.refreshIntervalPreset,
+            isPerformingSafeSwitchOperation: isPerformingSafeSwitchOperation,
+            target: self,
+            activateSavedAccountAction: #selector(activateSavedAccountTapped(_:))
+        ) else {
+            return false
+        }
+
+        let maintenanceItem = menu.items[quotaSectionEndIndex + 1]
+        maintenanceItem.title = AppLocalization.localized(en: "Maintenance", zh: "维护")
+        maintenanceItem.action = nil
+        maintenanceItem.target = nil
+        maintenanceItem.representedObject = nil
+        maintenanceItem.isEnabled = true
+        maintenanceItem.submenu = makeMaintenanceMenu()
+
+        let settingsItem = menu.items[quotaSectionEndIndex + 2]
+        settingsItem.title = AppLocalization.localized(en: "Settings…", zh: "设置…")
+        settingsItem.action = #selector(openSettingsTapped)
+        settingsItem.target = self
+        settingsItem.isEnabled = true
+
+        let quitItem = menu.items[quotaSectionEndIndex + 3]
+        quitItem.title = AppLocalization.localized(en: "Quit", zh: "退出")
+        quitItem.action = #selector(quitTapped)
+        quitItem.target = self
+        quitItem.isEnabled = true
+
+        return true
+    }
+
     private func visibleMenuNotice() -> MenuNotice? {
         transientMenuNotices.visibleNotice(
             isForegroundOperationActive: isPerformingSafeSwitchOperation,
@@ -488,7 +482,7 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private var isRefreshing: Bool {
-        refreshState.isRefreshing
+        profileRefreshController.isRefreshing
     }
 
     private var isPerformingSafeSwitchOperation: Bool {
@@ -599,6 +593,7 @@ final class AppController: NSObject, NSMenuDelegate {
     private func makeMaintenanceMenu() -> NSMenu {
         buildMaintenanceMenu(
             isRefreshing: isRefreshing,
+            refreshProgress: refreshProgress,
             isLaunchingSessionManager: isLaunchingSessionManager,
             isPerformingSafeSwitchOperation: isPerformingSafeSwitchOperation,
             hasRollbackRestorePoint: safeSwitchCenterState?.latestRestorePoint != nil,
@@ -648,14 +643,18 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private func makeCurrentProviderProfile(
-        currentRuntimeMaterial: ProfileRuntimeMaterial?
+        currentRuntimeMaterial: ProfileRuntimeMaterial?,
+        snapshot: CodexSnapshot?,
+        healthStatus: ProfileHealthStatus?,
+        errorMessage: String?,
+        lastRefreshAt: Date?
     ) -> ProviderProfile? {
         guard let currentRuntimeMaterial else {
             return nil
         }
 
         let matchingVaultRecord = matchingVaultRecord(for: currentRuntimeMaterial)
-        let fallbackName = currentSnapshot?.account.displayLabel
+        let fallbackName = snapshot?.account.displayLabel
             ?? matchingVaultRecord?.metadata.displayName
             ?? AppLocalization.currentAccountFallbackName()
 
@@ -664,11 +663,11 @@ final class AppController: NSObject, NSMenuDelegate {
             fallbackDisplayName: fallbackName,
             source: .current,
             runtimeMaterial: currentRuntimeMaterial,
-            snapshot: currentSnapshot,
-            healthStatus: currentHealthStatus ?? (currentError == nil ? .healthy : .readFailure),
-            errorMessage: currentError,
+            snapshot: snapshot,
+            healthStatus: healthStatus ?? (errorMessage == nil ? .healthy : .readFailure),
+            errorMessage: errorMessage,
             isCurrent: true,
-            quotaFetchedAt: currentSnapshot?.fetchedAt ?? lastRefreshAt
+            quotaFetchedAt: snapshot?.fetchedAt ?? lastRefreshAt
         )
     }
 
@@ -941,12 +940,14 @@ final class AppController: NSObject, NSMenuDelegate {
         guard beginForegroundOperation(.safeSwitch) else {
             return
         }
+        AppLog.safeSwitch.info("Starting safe switch target=\(targetProfile.displayName, privacy: .public)")
 
         let preview: SwitchOperationPreview
         do {
             preview = try switchOrchestrator.preview(targetProfile: targetProfile)
         } catch {
             endForegroundOperation(.safeSwitch)
+            AppLog.safeSwitch.error("Safe switch preview failed: \(self.userFacingMessage(for: error), privacy: .public)")
             presentSafeSwitchNotice(
                 MenuNotice(kind: .error, message: userFacingMessage(for: error)),
                 lifetime: .persistent
@@ -1011,11 +1012,13 @@ final class AppController: NSObject, NSMenuDelegate {
                     ),
                     lifetime: .timed(4)
                 )
+                AppLog.safeSwitch.info("Safe switch completed target=\(targetProfile.displayName, privacy: .public)")
                 self.cachedThreadSyncStatus = .healthy(
                     expectedProvider: targetProfile.threadProviderID
                         ?? (targetProfile.authMode == .chatgpt ? "openai" : targetProfile.providerID)
                 )
             } catch {
+                AppLog.safeSwitch.error("Safe switch failed: \(self.userFacingMessage(for: error), privacy: .public)")
                 self.presentSafeSwitchNotice(
                     self.localizedErrorNotice(
                         en: "Safe switch failed",
@@ -1038,6 +1041,7 @@ final class AppController: NSObject, NSMenuDelegate {
         guard beginForegroundOperation(.repair) else {
             return
         }
+        AppLog.safeSwitch.info("Starting repair flow")
 
         presentSafeSwitchNotice(
             MenuNotice(
@@ -1064,8 +1068,10 @@ final class AppController: NSObject, NSMenuDelegate {
                     ),
                     lifetime: .timed(4)
                 )
+                AppLog.safeSwitch.info("Repair flow completed")
                 self.cachedThreadSyncStatus = .healthy(expectedProvider: self.currentExpectedProviderID)
             } catch {
+                AppLog.safeSwitch.error("Repair flow failed: \(self.userFacingMessage(for: error), privacy: .public)")
                 self.presentSafeSwitchNotice(
                     self.localizedErrorNotice(
                         en: "Repair failed",
@@ -1087,6 +1093,7 @@ final class AppController: NSObject, NSMenuDelegate {
               beginForegroundOperation(.rollback) else {
             return
         }
+        AppLog.safeSwitch.info("Starting rollback restorePoint=\(restorePoint.id, privacy: .public)")
 
         guard confirmRollback(restorePoint: restorePoint) else {
             endForegroundOperation(.rollback)
@@ -1117,8 +1124,10 @@ final class AppController: NSObject, NSMenuDelegate {
                     ),
                     lifetime: .timed(4)
                 )
+                AppLog.safeSwitch.info("Rollback completed restorePoint=\(manifest.id, privacy: .public)")
                 self.cachedThreadSyncStatus = nil
             } catch {
+                AppLog.safeSwitch.error("Rollback failed: \(self.userFacingMessage(for: error), privacy: .public)")
                 self.presentSafeSwitchNotice(
                     self.localizedErrorNotice(
                         en: "Rollback failed",
@@ -1139,6 +1148,7 @@ final class AppController: NSObject, NSMenuDelegate {
         guard !isLaunchingSessionManager else { return }
 
         isLaunchingSessionManager = true
+        AppLog.sessionManager.info("Opening session manager")
         presentSessionManagerNotice(
             MenuNotice(
                 kind: .info,
@@ -1162,7 +1172,9 @@ final class AppController: NSObject, NSMenuDelegate {
                     isForegroundOperationActive: self.isPerformingSafeSwitchOperation,
                     isLaunchingSessionManager: self.isLaunchingSessionManager
                 )
+                AppLog.sessionManager.info("Session manager opened")
             } catch {
+                AppLog.sessionManager.error("Session manager open failed: \(self.userFacingMessage(for: error), privacy: .public)")
                 self.presentSessionManagerNotice(
                     MenuNotice(
                         kind: .error,
@@ -1185,6 +1197,7 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private func presentSettingsWindow() {
+        AppLog.settings.info("Presenting settings window")
         if settingsWindowCoordinator.show(
             state: currentSettingsWindowPresentationState(),
             callbacks: makeSettingsPresenterCallbacks()
@@ -1251,12 +1264,14 @@ final class AppController: NSObject, NSMenuDelegate {
                             try self.store.saveSettings(settings)
                         }
                     )
+                    AppLog.settings.info("Applied settings update")
                 } catch {
                     self.settings = previousSettings
                     self.settingsWindowCoordinator.update(state: self.currentSettingsWindowPresentationState())
                     self.statusNotice = MenuNotice(kind: .error, message: self.userFacingMessage(for: error))
+                    AppLog.settings.error("Settings update failed: \(self.userFacingMessage(for: error), privacy: .public)")
                 }
-                self.scheduleRefreshTimer()
+                self.profileRefreshController.scheduleRefreshTimer()
                 self.refreshSettingsUI()
             },
             onAddChatGPTAccount: { [weak self] in
@@ -1298,124 +1313,12 @@ final class AppController: NSObject, NSMenuDelegate {
         return result.sorted { $0.path < $1.path }
     }
 
-    private func bootstrapVaultAccounts(currentRuntimeMaterial: ProfileRuntimeMaterial?) {
-        do {
-            let outcome = try vaultBootstrapCoordinator.bootstrap(
-                currentRuntimeMaterial: currentRuntimeMaterial,
-                currentSnapshot: currentSnapshot,
-                settings: settings,
-                saveSettings: { [store] settings, writer in
-                    try store.saveSettings(settings, writer: writer)
-                },
-                userFacingMessage: { [weak self] error in
-                    self?.userFacingMessage(for: error) ?? error.localizedDescription
-                }
-            )
-            settings = outcome.settings
-            if let statusNotice = outcome.statusNotice {
-                self.statusNotice = statusNotice
-            }
-            if let safeSwitchNotice = outcome.safeSwitchNotice {
-                presentSafeSwitchNotice(
-                    safeSwitchNotice,
-                    lifetime: .persistent
-                )
-            }
-        } catch {
-            presentSafeSwitchNotice(
-                MenuNotice(
-                    kind: .error,
-                    message: userFacingMessage(for: error)
-                ),
-                lifetime: .persistent
-            )
-        }
-    }
-
-    private func refreshVaultProfiles(
-        currentRuntimeMaterial: ProfileRuntimeMaterial?,
-        scheduleQuotaRefresh: Bool,
-        refreshPolicy: VaultQuotaRefreshCoordinator.RefreshPolicy = .manualFull,
-        reloadSnapshot: Bool = true
-    ) {
-        if reloadSnapshot || vaultSnapshot == nil {
-            do {
-                vaultSnapshot = try vaultStore.loadSnapshot()
-            } catch {
-                vaultSnapshot = nil
-                vaultProfiles = []
-                availableSwitchTargets = []
-                presentSafeSwitchNotice(
-                    localizedErrorNotice(
-                        en: "Failed to read saved accounts",
-                        zh: "读取已保存账号失败",
-                        error: error
-                    ),
-                    lifetime: .persistent
-                )
-            }
-        }
-
-        rebuildVaultPresentation(currentRuntimeMaterial: currentRuntimeMaterial)
-        applyVaultPresentationStateUpdates()
-
-        guard scheduleQuotaRefresh, let vaultSnapshot else {
-            return
-        }
-
-        quotaRefreshCoordinator.requestRefresh(
-            .init(
-                currentProfile: currentProviderProfile,
-                vaultAccounts: vaultSnapshot.accounts,
-                cachedRecords: Array(vaultQuotaRecords.values),
-                refreshPolicy: refreshPolicy
-            )
-        ) { [weak self] records in
-            guard let self else { return }
-            self.applyQuotaRefreshRecords(records)
-            self.scheduleVaultPresentationRefresh(currentRuntimeMaterial: currentRuntimeMaterial)
-        } onComplete: { [weak self] records in
-            guard let self else { return }
-            self.applyQuotaRefreshRecords(records)
-            do {
-                try self.quotaCacheStore.save(records)
-            } catch {
-                self.statusNotice = self.localizedErrorNotice(
-                    kind: .warning,
-                    en: "Quota cache could not be updated",
-                    zh: "额度缓存无法更新",
-                    error: error
-                )
-            }
-            self.scheduleVaultPresentationRefresh(
-                currentRuntimeMaterial: currentRuntimeMaterial,
-                delay: 0
-            )
-        }
-    }
-
     private func applyVaultPresentationStateUpdates(now: Date = Date()) {
         refreshSafeSwitchCenterState()
         refreshQuotaOverviewState(now: now)
         refreshSettingsAccountPanel()
+        updateStatusTitle()
         rebuildMenu(reason: "vault-presentation")
-    }
-
-    private func scheduleVaultPresentationRefresh(
-        currentRuntimeMaterial: ProfileRuntimeMaterial?,
-        delay: TimeInterval = 0.3
-    ) {
-        pendingVaultPresentationRefresh?.cancel()
-        let workItem = DispatchWorkItem { [weak self] in
-            self?.pendingVaultPresentationRefresh = nil
-            self?.refreshVaultProfiles(
-                currentRuntimeMaterial: currentRuntimeMaterial,
-                scheduleQuotaRefresh: false,
-                reloadSnapshot: false
-            )
-        }
-        pendingVaultPresentationRefresh = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
 
     private func rebuildVaultPresentation(currentRuntimeMaterial: ProfileRuntimeMaterial?) {
@@ -1487,10 +1390,6 @@ final class AppController: NSObject, NSMenuDelegate {
             refreshIntervalPreset: settings.refreshIntervalPreset,
             now: now
         )
-    }
-
-    private func applyQuotaRefreshRecords(_ records: [VaultQuotaSnapshotRecord]) {
-        vaultQuotaRecords = Dictionary(uniqueKeysWithValues: records.map { ($0.accountID, $0) })
     }
 
     private func normalizeTransientMenuNotices(now: Date = Date()) {

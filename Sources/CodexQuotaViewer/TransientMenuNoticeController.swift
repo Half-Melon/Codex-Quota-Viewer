@@ -9,13 +9,16 @@ final class TransientMenuNoticeController {
 
     private var pendingExpiryRefresh: DispatchWorkItem?
     private let scheduler: Scheduler
+    private let operationStateProvider: (@MainActor () -> (isForegroundOperationActive: Bool, isLaunchingSessionManager: Bool))?
     private let onNoticeExpired: @MainActor () -> Void
 
     init(
         scheduler: @escaping Scheduler = TransientMenuNoticeController.defaultScheduler,
+        operationStateProvider: (@MainActor () -> (isForegroundOperationActive: Bool, isLaunchingSessionManager: Bool))? = nil,
         onNoticeExpired: @escaping @MainActor () -> Void
     ) {
         self.scheduler = scheduler
+        self.operationStateProvider = operationStateProvider
         self.onNoticeExpired = onNoticeExpired
     }
 
@@ -143,10 +146,14 @@ final class TransientMenuNoticeController {
         pendingExpiryRefresh = scheduler(delay) { [weak self] in
             guard let self else { return }
             self.pendingExpiryRefresh = nil
-            self.normalize(
-                now: Date(),
+            let currentOperationState = self.operationStateProvider?() ?? (
                 isForegroundOperationActive: isForegroundOperationActive,
                 isLaunchingSessionManager: isLaunchingSessionManager
+            )
+            self.normalize(
+                now: Date(),
+                isForegroundOperationActive: currentOperationState.isForegroundOperationActive,
+                isLaunchingSessionManager: currentOperationState.isLaunchingSessionManager
             )
             self.onNoticeExpired()
         }

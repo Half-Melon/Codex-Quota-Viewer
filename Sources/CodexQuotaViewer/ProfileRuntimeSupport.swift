@@ -87,7 +87,10 @@ func canonicalRuntimeMaterialForStorage(_ runtimeMaterial: ProfileRuntimeMateria
 }
 
 func stableAccountIdentityKey(for runtimeMaterial: ProfileRuntimeMaterial) -> String {
-    let canonicalRuntime = canonicalRuntimeMaterialForStorage(runtimeMaterial)
+    stableAccountIdentityKey(forCanonicalRuntime: canonicalRuntimeMaterialForStorage(runtimeMaterial))
+}
+
+func stableAccountIdentityKey(forCanonicalRuntime canonicalRuntime: ProfileRuntimeMaterial) -> String {
     let authMode = resolveAuthMode(authData: canonicalRuntime.authData)
 
     switch authMode {
@@ -107,7 +110,11 @@ func stableAccountIdentityKey(for runtimeMaterial: ProfileRuntimeMaterial) -> St
 }
 
 func stableAccountRecordID(for runtimeMaterial: ProfileRuntimeMaterial) -> String {
-    let digest = SHA256.hash(data: Data(stableAccountIdentityKey(for: runtimeMaterial).utf8))
+    stableAccountRecordID(forCanonicalRuntime: canonicalRuntimeMaterialForStorage(runtimeMaterial))
+}
+
+func stableAccountRecordID(forCanonicalRuntime canonicalRuntime: ProfileRuntimeMaterial) -> String {
+    let digest = SHA256.hash(data: Data(stableAccountIdentityKey(forCanonicalRuntime: canonicalRuntime).utf8))
     let hex = hexString(for: digest)
     return "acct-\(hex.prefix(16))"
 }
@@ -142,10 +149,6 @@ func resolveAuthMode(authData: Data) -> CodexAuthMode {
     }
 
     return .unknown
-}
-
-func summarizeRuntimeConfig(_ configData: Data?) -> RuntimeConfigSummary {
-    parseRuntimeConfig(configData)
 }
 
 func apiKeyProfileDetails(authData: Data, configData: Data?) -> APIKeyProfileDetails? {
@@ -210,63 +213,21 @@ func isAPIKeyAuthMode(_ rawValue: String?) -> Bool {
 }
 
 func parseRuntimeConfig(_ configData: Data?) -> RuntimeConfigSummary {
-    guard let configData,
-          let raw = String(data: configData, encoding: .utf8) else {
+    guard let document = try? LightweightTOMLDocument(data: configData) else {
         return RuntimeConfigSummary()
     }
 
     var summary = RuntimeConfigSummary()
-    var currentSection: String?
-    var rawProviderID: String?
-    var rootBaseURL: String?
-    var sectionProviderName: String?
-    var sectionBaseURL: String?
-    var sectionRequiresOpenAIAuth = false
-
-    for rawLine in raw.components(separatedBy: .newlines) {
-        let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !line.isEmpty, !line.hasPrefix("#") else { continue }
-
-        if line.hasPrefix("[") && line.hasSuffix("]") {
-            currentSection = String(line.dropFirst().dropLast())
-            continue
-        }
-
-        guard let split = line.firstIndex(of: "=") else { continue }
-        let key = line[..<split].trimmingCharacters(in: .whitespacesAndNewlines)
-        let value = normalizedConfigValue(line[line.index(after: split)...])
-
-        if currentSection == nil {
-            switch key {
-            case "model":
-                summary.model = value
-            case "model_provider":
-                rawProviderID = value
-            case "base_url":
-                rootBaseURL = value
-            default:
-                break
-            }
-            continue
-        }
-
-        if let providerID = rawProviderID,
-           currentSection == "model_providers.\(providerID)" {
-            switch key {
-            case "name":
-                sectionProviderName = value
-            case "base_url":
-                sectionBaseURL = value
-            case "requires_openai_auth":
-                if let parsed = normalizedConfigBoolean(value) {
-                    sectionRequiresOpenAIAuth = parsed
-                }
-            default:
-                break
-            }
-        }
+    let rawProviderID = document.rootAssignmentValue(forKey: "model_provider")
+    let rootBaseURL = document.rootAssignmentValue(forKey: "base_url")
+    let section = rawProviderID.flatMap {
+        document.section(named: "model_providers.\($0)")
     }
+    let sectionProviderName = section?.assignmentValue(forKey: "name")
+    let sectionBaseURL = section?.assignmentValue(forKey: "base_url")
+    let sectionRequiresOpenAIAuth = section?.boolAssignmentValue(forKey: "requires_openai_auth") ?? false
 
+    summary.model = document.rootAssignmentValue(forKey: "model")
     summary.providerID = rawProviderID
     summary.threadProviderID = rawProviderID
     summary.providerName = sectionProviderName
@@ -331,57 +292,6 @@ func escapedTOMLString(_ value: String) -> String {
     value
         .replacingOccurrences(of: "\\", with: "\\\\")
         .replacingOccurrences(of: "\"", with: "\\\"")
-}
-
-private func normalizedConfigValue<S: StringProtocol>(_ rawValue: S) -> String {
-    var value = String(rawValue).trimmingCharacters(in: .whitespacesAndNewlines)
-    value = strippingInlineTOMLComment(from: value)
-    if value.hasPrefix("\""), value.hasSuffix("\""), value.count >= 2 {
-        value.removeFirst()
-        value.removeLast()
-    }
-    return value
-}
-
-private func strippingInlineTOMLComment(from rawValue: String) -> String {
-    var result = ""
-    var isInsideQuotes = false
-    var isEscaping = false
-
-    for character in rawValue {
-        if character == "#" && !isInsideQuotes {
-            break
-        }
-
-        result.append(character)
-
-        if isEscaping {
-            isEscaping = false
-            continue
-        }
-
-        if character == "\\" {
-            isEscaping = true
-            continue
-        }
-
-        if character == "\"" {
-            isInsideQuotes.toggle()
-        }
-    }
-
-    return result.trimmingCharacters(in: .whitespacesAndNewlines)
-}
-
-private func normalizedConfigBoolean(_ rawValue: String) -> Bool? {
-    switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-    case "true":
-        return true
-    case "false":
-        return false
-    default:
-        return nil
-    }
 }
 
 private func normalizedOpenAICompatibleStorageBaseURL(from rawValue: String?) -> String? {

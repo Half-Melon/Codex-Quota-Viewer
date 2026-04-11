@@ -56,15 +56,11 @@ final class SettingsPresenter {
                 settings: settings,
                 accountPanelState: accountPanelState
             )
-            nextController.onSettingsChanged = callbacks.onSettingsChanged
-            nextController.onAddChatGPTAccount = callbacks.onAddChatGPTAccount
-            nextController.onAddAPIAccount = callbacks.onAddAPIAccount
-            nextController.onActivateAccount = callbacks.onActivateAccount
-            nextController.onRenameAccount = callbacks.onRenameAccount
-            nextController.onForgetAccount = callbacks.onForgetAccount
-            nextController.onOpenVaultFolder = callbacks.onOpenVaultFolder
-            nextController.onWindowClosed = callbacks.onWindowClosed
             controller = nextController
+        }
+
+        if let controller {
+            apply(callbacks: callbacks, to: controller)
         }
 
         if !needsInitialController {
@@ -73,6 +69,20 @@ final class SettingsPresenter {
         controller?.showWindow(nil)
         controller?.window?.makeKeyAndOrderFront(nil)
         controller?.window?.orderFrontRegardless()
+    }
+
+    private func apply(
+        callbacks: SettingsPresenterCallbacks,
+        to controller: SettingsWindowController
+    ) {
+        controller.onSettingsChanged = callbacks.onSettingsChanged
+        controller.onAddChatGPTAccount = callbacks.onAddChatGPTAccount
+        controller.onAddAPIAccount = callbacks.onAddAPIAccount
+        controller.onActivateAccount = callbacks.onActivateAccount
+        controller.onRenameAccount = callbacks.onRenameAccount
+        controller.onForgetAccount = callbacks.onForgetAccount
+        controller.onOpenVaultFolder = callbacks.onOpenVaultFolder
+        controller.onWindowClosed = callbacks.onWindowClosed
     }
 }
 

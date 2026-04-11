@@ -15,14 +15,20 @@ func mergeRuntimeConfig(
     currentConfigData: Data?,
     targetConfigData: Data?
 ) throws -> Data {
-    let current = try TOMLDocument(data: currentConfigData)
-    let target = try TOMLDocument(data: targetConfigData)
+    let current: LightweightTOMLDocument
+    let target: LightweightTOMLDocument
+    do {
+        current = try LightweightTOMLDocument(data: currentConfigData)
+        target = try LightweightTOMLDocument(data: targetConfigData)
+    } catch LightweightTOMLDocumentError.invalidUTF8 {
+        throw RuntimeConfigMergeError.invalidUTF8
+    }
 
-    let targetRootKeys = Set(target.rootLines.compactMap(rootAssignmentKey(from:)))
+    let targetRootKeys = Set(target.rootLines.compactMap(tomlAssignmentKey(from:)))
     let targetSectionNames = Set(target.sections.map(\.name))
 
     let filteredCurrentRoot = current.rootLines.filter { line in
-        guard let key = rootAssignmentKey(from: line) else {
+        guard let key = tomlAssignmentKey(from: line) else {
             return true
         }
         return key != "model_provider" && !targetRootKeys.contains(key)
@@ -48,97 +54,6 @@ func mergeRuntimeConfig(
     return Data((joined.isEmpty ? "" : joined + "\n").utf8)
 }
 
-private struct TOMLDocument {
-    struct Section {
-        let name: String
-        let headerLine: String
-        let bodyLines: [String]
-    }
-
-    let rootLines: [String]
-    let sections: [Section]
-
-    init(data: Data?) throws {
-        guard let data else {
-            rootLines = []
-            sections = []
-            return
-        }
-
-        guard let raw = String(data: data, encoding: .utf8) else {
-            throw RuntimeConfigMergeError.invalidUTF8
-        }
-
-        var root: [String] = []
-        var parsedSections: [Section] = []
-        var currentSectionName: String?
-        var currentHeaderLine: String?
-        var currentBody: [String] = []
-
-        for line in raw.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n") {
-            if let sectionName = sectionName(from: line) {
-                if let currentSectionName,
-                   let currentHeaderLine {
-                    parsedSections.append(
-                        Section(
-                            name: currentSectionName,
-                            headerLine: currentHeaderLine,
-                            bodyLines: currentBody
-                        )
-                    )
-                }
-
-                currentSectionName = sectionName
-                currentHeaderLine = line
-                currentBody = []
-                continue
-            }
-
-            if currentSectionName == nil {
-                root.append(line)
-            } else {
-                currentBody.append(line)
-            }
-        }
-
-        if let currentSectionName,
-           let currentHeaderLine {
-            parsedSections.append(
-                Section(
-                    name: currentSectionName,
-                    headerLine: currentHeaderLine,
-                    bodyLines: currentBody
-                )
-            )
-        }
-
-        rootLines = root
-        sections = parsedSections
-    }
-}
-
-private func rootAssignmentKey(from line: String) -> String? {
-    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty,
-          !trimmed.hasPrefix("#"),
-          !trimmed.hasPrefix("["),
-          let equalsIndex = trimmed.firstIndex(of: "=") else {
-        return nil
-    }
-
-    return trimmed[..<equalsIndex].trimmingCharacters(in: .whitespacesAndNewlines)
-}
-
-private func sectionName(from line: String) -> String? {
-    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard trimmed.hasPrefix("["),
-          trimmed.hasSuffix("]") else {
-        return nil
-    }
-
-    return String(trimmed.dropFirst().dropLast())
-}
-
 private func append(lines: [String], to output: inout [String]) {
     let trimmedLines = trimBlankLines(lines)
     guard !trimmedLines.isEmpty else {
@@ -152,7 +67,7 @@ private func append(lines: [String], to output: inout [String]) {
     output.append(contentsOf: trimmedLines)
 }
 
-private func append(section: TOMLDocument.Section, to output: inout [String]) {
+private func append(section: LightweightTOMLDocument.Section, to output: inout [String]) {
     if !output.isEmpty,
        output.last?.isEmpty == false {
         output.append("")

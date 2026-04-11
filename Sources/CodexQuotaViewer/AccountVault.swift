@@ -280,7 +280,7 @@ final class VaultAccountStore {
         try ensureAccountsDirectoryExists()
 
         let canonicalRuntime = canonicalRuntimeMaterialForStorage(runtimeMaterial)
-        let accountID = accountID(for: canonicalRuntime)
+        let accountID = stableAccountRecordID(forCanonicalRuntime: canonicalRuntime)
         let snapshot = try loadSnapshot()
 
         if let existing = snapshot.accounts.first(where: { $0.id == accountID }) {
@@ -303,7 +303,7 @@ final class VaultAccountStore {
             return VaultAccountUpsertResult(record: existing, inserted: false, updated: false)
         }
 
-        let summary = summarizeRuntimeConfig(canonicalRuntime.configData)
+        let summary = parseRuntimeConfig(canonicalRuntime.configData)
         let now = Date()
         let metadata = VaultAccountMetadata(
             id: accountID,
@@ -317,7 +317,7 @@ final class VaultAccountStore {
             createdAt: now,
             lastUsedAt: nil,
             source: source,
-            runtimeKey: stableAccountIdentityKey(for: canonicalRuntime)
+            runtimeKey: stableAccountIdentityKey(forCanonicalRuntime: canonicalRuntime)
         )
         let record = makeRecord(metadata: metadata, runtimeMaterial: canonicalRuntime)
         try writeRecord(record, writer: writer)
@@ -336,7 +336,7 @@ final class VaultAccountStore {
             return NormalizationCandidate(
                 original: record,
                 normalizedRuntime: normalizedRuntime,
-                targetID: accountID(for: normalizedRuntime)
+                targetID: stableAccountRecordID(forCanonicalRuntime: normalizedRuntime)
             )
         }
 
@@ -580,7 +580,7 @@ final class VaultAccountStore {
         source: VaultAccountSource,
         runtimeMaterial: ProfileRuntimeMaterial
     ) -> VaultAccountRecord {
-        let summary = summarizeRuntimeConfig(runtimeMaterial.configData)
+        let summary = parseRuntimeConfig(runtimeMaterial.configData)
         let trimmedFallback = fallbackDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let mergedDisplayName = shouldReplaceDisplayName(
             existing.metadata.displayName,
@@ -604,7 +604,7 @@ final class VaultAccountStore {
             createdAt: existing.metadata.createdAt,
             lastUsedAt: existing.metadata.lastUsedAt,
             source: mergedSource,
-            runtimeKey: stableAccountIdentityKey(for: runtimeMaterial)
+            runtimeKey: stableAccountIdentityKey(forCanonicalRuntime: runtimeMaterial)
         )
         return makeRecord(metadata: metadata, runtimeMaterial: runtimeMaterial)
     }
@@ -614,7 +614,7 @@ final class VaultAccountStore {
         from candidates: [NormalizationCandidate]
     ) -> VaultAccountRecord {
         let preferred = candidates.sorted(by: normalizationCandidateComparator).first ?? candidates[0]
-        let summary = summarizeRuntimeConfig(preferred.normalizedRuntime.configData)
+        let summary = parseRuntimeConfig(preferred.normalizedRuntime.configData)
         let mergedCreatedAt = candidates.map { $0.original.metadata.createdAt }.min() ?? preferred.original.metadata.createdAt
         let mergedLastUsedAt = candidates.compactMap { $0.original.metadata.lastUsedAt }.max()
         let mergedDisplayName = preferredDisplayName(from: candidates) ?? preferred.original.metadata.displayName
@@ -629,7 +629,7 @@ final class VaultAccountStore {
             createdAt: mergedCreatedAt,
             lastUsedAt: mergedLastUsedAt,
             source: preferred.original.metadata.source,
-            runtimeKey: stableAccountIdentityKey(for: preferred.normalizedRuntime)
+            runtimeKey: stableAccountIdentityKey(forCanonicalRuntime: preferred.normalizedRuntime)
         )
         return makeRecord(metadata: metadata, runtimeMaterial: preferred.normalizedRuntime)
     }

@@ -182,3 +182,67 @@ func transientMenuNoticeControllerExpiresTimedNoticeAndInvokesCallback() {
         ) == nil
     )
 }
+
+@MainActor
+@Test
+func transientMenuNoticeControllerUsesLatestOperationStateWhenExpiryCallbackRuns() {
+    let now = Date(timeIntervalSince1970: 1_800_000_400)
+    let stateBox = NoticeOperationStateBox(isForegroundOperationActive: true)
+    var scheduledAction: (@MainActor () -> Void)?
+    let controller = TransientMenuNoticeController(
+        scheduler: { _, action in
+            scheduledAction = action
+            return DispatchWorkItem {}
+        },
+        operationStateProvider: {
+            (
+                isForegroundOperationActive: stateBox.isForegroundOperationActive,
+                isLaunchingSessionManager: false
+            )
+        },
+        onNoticeExpired: {}
+    )
+
+    controller.presentSafeSwitchNotice(
+        MenuNotice(kind: .info, message: "Switching…"),
+        lifetime: .operationBound,
+        now: now,
+        isForegroundOperationActive: stateBox.isForegroundOperationActive,
+        isLaunchingSessionManager: false
+    )
+    controller.presentSessionManagerNotice(
+        MenuNotice(kind: .info, message: "Opening…"),
+        lifetime: .timed(3),
+        now: now,
+        isForegroundOperationActive: stateBox.isForegroundOperationActive,
+        isLaunchingSessionManager: false
+    )
+
+    // Operation ends before the timed notice expires.
+    stateBox.isForegroundOperationActive = false
+
+    scheduledAction?()
+
+    // Later a new operation starts; the old operation-bound notice should not re-appear.
+    stateBox.isForegroundOperationActive = true
+    #expect(
+        controller.visibleNotice(
+            isForegroundOperationActive: stateBox.isForegroundOperationActive,
+            isLaunchingSessionManager: false,
+            localizationNotice: nil,
+            statusNotice: nil,
+            currentError: nil,
+            loadWarningNotice: nil,
+            now: now.addingTimeInterval(4)
+        ) == nil
+    )
+}
+
+@MainActor
+private final class NoticeOperationStateBox {
+    var isForegroundOperationActive: Bool
+
+    init(isForegroundOperationActive: Bool) {
+        self.isForegroundOperationActive = isForegroundOperationActive
+    }
+}
