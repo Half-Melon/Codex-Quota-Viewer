@@ -9,6 +9,9 @@ docs/*
 docs/images/*
 !docs/images/menu-screenshot.png
 !docs/images/session-manager-screenshot.png
+!docs/superpowers/
+!docs/superpowers/specs/
+!docs/superpowers/specs/*.md
 
 *.app
 *.dmg
