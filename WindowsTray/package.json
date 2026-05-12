@@ -1,0 +1,19 @@
+{
+  "name": "codex-quota-viewer-windows-tray",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "typecheck": "tsc --noEmit --target ES2022 --module ESNext --lib DOM,ES2022 src/main.ts"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "typescript": "^5.9.2",
+    "vite": "^8.0.3"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0"
+  }
+}

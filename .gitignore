@@ -35,3 +35,10 @@ main-*.js
 deeplinks-*.js
 worker.js
 outputs/runtime/
+
+WindowsTray/node_modules/
+WindowsTray/dist/
+WindowsTray/src-tauri/target/
+WindowsTray/src-tauri/resources/
+WindowsTray/src-tauri/NodeRuntime/
+WindowsTray/src-tauri/SessionManager/

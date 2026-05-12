@@ -1,0 +1,34 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Codex Quota Viewer",
+  "version": "0.1.0",
+  "identifier": "com.halfmelon.codexquotaviewer.windows",
+  "build": {
+    "beforeDevCommand": "",
+    "beforeBuildCommand": "",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Codex Quota Viewer",
+        "width": 480,
+        "height": 240,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "nsis"],
+    "icon": ["icons/icon.ico"],
+    "resources": {
+      "resources/session-manager": "SessionManager",
+      "resources/node-runtime": "NodeRuntime"
+    }
+  }
+}
