@@ -48,8 +48,13 @@ impl WindowsRunKeyLaunchAtLogin {
     }
 }
 
+fn quoted_run_value(exe_path: &str) -> String {
+    format!("\"{}\"", exe_path.replace('"', "\\\""))
+}
+
 impl LaunchAtLoginManager for WindowsRunKeyLaunchAtLogin {
     fn sync(&mut self, enabled: bool) -> Result<(), AppError> {
+        let run_value = quoted_run_value(&self.exe_path);
         let status = if enabled {
             Command::new("reg")
                 .args([
@@ -60,7 +65,7 @@ impl LaunchAtLoginManager for WindowsRunKeyLaunchAtLogin {
                     "/t",
                     "REG_SZ",
                     "/d",
-                    &self.exe_path,
+                    &run_value,
                     "/f",
                 ])
                 .status()
@@ -105,6 +110,14 @@ mod tests {
             }
             Ok(())
         }
+    }
+
+    #[test]
+    fn quotes_run_value_for_paths_with_spaces() {
+        assert_eq!(
+            quoted_run_value(r"C:\Program Files\Codex Quota Viewer\app.exe"),
+            r#""C:\Program Files\Codex Quota Viewer\app.exe""#
+        );
     }
 
     #[test]
