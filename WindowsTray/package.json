@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev:frontend": "vite --host 127.0.0.1 --port 1420",
     "dev": "tauri dev",
+    "build:frontend": "vite build",
     "build": "tauri build",
     "typecheck": "tsc --noEmit --target ES2022 --module ESNext --lib DOM,ES2022 src/main.ts"
   },

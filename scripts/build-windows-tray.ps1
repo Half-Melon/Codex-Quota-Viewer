@@ -4,17 +4,45 @@ $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $windowsTrayRoot = Join-Path $repoRoot "WindowsTray"
 $nodeRuntimeRoot = Join-Path $windowsTrayRoot "src-tauri\NodeRuntime"
 $nodeExe = Join-Path $nodeRuntimeRoot "node.exe"
+$nodeDownloadUrl = "https://nodejs.org/download/release/latest-v22.x/win-x64/node.exe"
+
+function Invoke-Checked {
+  param(
+    [Parameter(Mandatory = $true)]
+    [scriptblock] $Command,
+    [Parameter(Mandatory = $true)]
+    [string] $Description
+  )
+
+  & $Command
+  if ($LASTEXITCODE -ne 0) {
+    throw "$Description failed with exit code $LASTEXITCODE"
+  }
+}
 
 & (Join-Path $PSScriptRoot "build-session-manager-windows.ps1")
 
 if (!(Test-Path $nodeExe)) {
-  throw "Bundled Windows Node runtime is missing at $nodeExe. Place node.exe and its runtime files under WindowsTray\src-tauri\NodeRuntime before building."
+  New-Item -ItemType Directory -Force $nodeRuntimeRoot | Out-Null
+  $localNode = Get-Command node -ErrorAction SilentlyContinue
+  if ($localNode) {
+    Write-Host "Copying local Node runtime from $($localNode.Source)"
+    Copy-Item -LiteralPath $localNode.Source -Destination $nodeExe
+  }
+  else {
+    Write-Host "Downloading Windows Node runtime from $nodeDownloadUrl"
+    Invoke-WebRequest -Uri $nodeDownloadUrl -OutFile $nodeExe
+  }
+}
+
+if (!(Test-Path $nodeExe)) {
+  throw "Bundled Windows Node runtime is missing at $nodeExe."
 }
 
 Push-Location $windowsTrayRoot
 try {
-  corepack npm install
-  corepack npm run build
+  Invoke-Checked { corepack npm ci } "Installing Windows tray dependencies"
+  Invoke-Checked { corepack npm run build } "Building Windows tray app"
 }
 finally {
   Pop-Location

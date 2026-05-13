@@ -25,16 +25,20 @@ The MVP reads the active Codex profile from `%USERPROFILE%\.codex` unless
 
 ## Build
 
+Prerequisites:
+
+- Node available through `PATH`.
+- Rust/Cargo available through `PATH`.
+- Windows native build tools required by Tauri.
+
 Run on Windows:
 
 ```powershell
 scripts\build-windows-tray.ps1
 ```
 
-Before building, place the Windows Node runtime under:
-
-```text
-WindowsTray\src-tauri\NodeRuntime\
-```
-
-The runtime directory must contain `node.exe`.
+The build script stages the bundled Session Manager, installs its production
+dependencies, and prepares `WindowsTray\src-tauri\NodeRuntime\node.exe` in the
+ignored staging directory. If `node.exe` is not already staged, the script first
+copies the local Node executable from `PATH`; if Node is not installed locally,
+it downloads the official Windows Node v22 runtime.

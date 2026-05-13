@@ -4,10 +4,6 @@ version = "0.1.0"
 description = "Windows tray MVP for Codex Quota Viewer"
 edition = "2021"
 
-[lib]
-name = "codex_quota_viewer_windows_tray"
-crate-type = ["staticlib", "cdylib", "rlib"]
-
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

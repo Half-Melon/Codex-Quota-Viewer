@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "com.halfmelon.codexquotaviewer.windows",
   "build": {
-    "beforeDevCommand": "",
-    "beforeBuildCommand": "",
+    "beforeDevCommand": "npm run dev:frontend",
+    "beforeBuildCommand": "npm run build:frontend",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"
   },
@@ -27,8 +27,8 @@
     "targets": ["msi", "nsis"],
     "icon": ["icons/icon.ico"],
     "resources": {
-      "resources/session-manager": "SessionManager",
-      "resources/node-runtime": "NodeRuntime"
+      "SessionManager": "SessionManager",
+      "NodeRuntime": "NodeRuntime"
     }
   }
 }
