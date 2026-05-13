@@ -1,5 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod codex_home;
+mod errors;
+
 fn main() {
     tauri::Builder::default()
         .setup(|_app| Ok(()))
