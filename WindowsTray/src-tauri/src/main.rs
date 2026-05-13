@@ -2,6 +2,7 @@
 
 mod codex_home;
 mod errors;
+mod quota;
 
 fn main() {
     tauri::Builder::default()
