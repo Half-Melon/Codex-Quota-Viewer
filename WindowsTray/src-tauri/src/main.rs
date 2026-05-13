@@ -3,6 +3,7 @@
 mod codex_home;
 mod errors;
 mod quota;
+mod session_manager;
 
 fn main() {
     tauri::Builder::default()
