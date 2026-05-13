@@ -18,11 +18,14 @@ mod tray;
 
 use app_state::{AppState, SharedAppState, TraySnapshot};
 use codex_home::resolve_codex_home;
+use localization::resolve_language;
 use quota::fetch_current_quota;
 use scheduler::RefreshScheduler;
 use session_manager::{SessionManager, SessionManagerPaths};
 use settings::{load_settings, AppSettings};
-use tray::{MENU_OPEN_CODEX_FOLDER, MENU_OPEN_SESSION_MANAGER, MENU_QUIT, MENU_REFRESH};
+use tray::{
+    MENU_OPEN_CODEX_FOLDER, MENU_OPEN_SESSION_MANAGER, MENU_QUIT, MENU_REFRESH, MENU_SETTINGS,
+};
 
 fn main() {
     tauri::Builder::default()
@@ -62,7 +65,9 @@ fn main() {
             });
 
             app.manage(state.clone());
-            tray::install_tray(&app_handle, &TraySnapshot::loading())?;
+            let resolved_language =
+                resolve_language(settings.app_language, &system_language_hints());
+            tray::install_tray(&app_handle, &TraySnapshot::loading(), resolved_language)?;
             spawn_refresh(app_handle.clone(), state.clone());
             start_refresh_scheduler(app_handle, state, settings);
             Ok(())
@@ -75,6 +80,7 @@ pub(crate) fn handle_menu_event(app: &AppHandle, menu_id: &str) {
     let state = app.state::<SharedAppState>().inner().clone();
     match menu_id {
         MENU_REFRESH => spawn_refresh(app.clone(), state),
+        MENU_SETTINGS => show_settings_window(app),
         MENU_OPEN_SESSION_MANAGER => spawn_open_session_manager(app.clone(), state),
         MENU_OPEN_CODEX_FOLDER => {
             let codex_home = state.codex_home.clone();
@@ -109,6 +115,25 @@ fn restart_refresh_scheduler(app: AppHandle, state: SharedAppState, settings: Ap
     start_refresh_scheduler(app, state, settings);
 }
 
+async fn current_resolved_language(state: &SharedAppState) -> settings::ResolvedAppLanguage {
+    let settings = state.settings.lock().await;
+    resolve_language(settings.app_language, &system_language_hints())
+}
+
+fn system_language_hints() -> Vec<String> {
+    std::env::var("LANG")
+        .ok()
+        .into_iter()
+        .chain(std::env::var("LANGUAGE").ok())
+        .collect()
+}
+
+async fn update_tray_from_state(app: &AppHandle, state: &SharedAppState) {
+    let snapshot = state.tray_snapshot.lock().await.clone();
+    let language = current_resolved_language(state).await;
+    let _ = tray::update_tray_menu(app, &snapshot, language);
+}
+
 fn spawn_refresh(app: AppHandle, state: SharedAppState) {
     tauri::async_runtime::spawn(async move {
         {
@@ -122,22 +147,24 @@ fn spawn_refresh(app: AppHandle, state: SharedAppState) {
         {
             let mut snapshot = state.tray_snapshot.lock().await;
             snapshot.is_refreshing = true;
-            let _ = tray::update_tray_menu(&app, &snapshot);
         }
+        update_tray_from_state(&app, &state).await;
 
         let result = fetch_current_quota(&state.codex_home, state.quota_timeout).await;
-        let mut snapshot = state.tray_snapshot.lock().await;
-        snapshot.is_refreshing = false;
-        match result {
-            Ok(quota) => {
-                snapshot.quota = Some(quota);
-                snapshot.last_error = None;
-            }
-            Err(error) => {
-                snapshot.last_error = Some(error);
+        {
+            let mut snapshot = state.tray_snapshot.lock().await;
+            snapshot.is_refreshing = false;
+            match result {
+                Ok(quota) => {
+                    snapshot.quota = Some(quota);
+                    snapshot.last_error = None;
+                }
+                Err(error) => {
+                    snapshot.last_error = Some(error);
+                }
             }
         }
-        let _ = tray::update_tray_menu(&app, &snapshot);
+        update_tray_from_state(&app, &state).await;
 
         {
             let mut in_progress = state.refresh_in_progress.lock().await;
@@ -155,9 +182,17 @@ fn spawn_open_session_manager(app: AppHandle, state: SharedAppState) {
         if let Err(error) = result {
             let mut snapshot = state.tray_snapshot.lock().await;
             snapshot.last_error = Some(error);
-            let _ = tray::update_tray_menu(&app, &snapshot);
+            drop(snapshot);
+            update_tray_from_state(&app, &state).await;
         }
     });
+}
+
+fn show_settings_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
 }
 
 fn spawn_quit(app: AppHandle, state: SharedAppState) {
