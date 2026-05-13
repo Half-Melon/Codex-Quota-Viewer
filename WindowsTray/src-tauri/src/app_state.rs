@@ -6,7 +6,9 @@ use tauri::async_runtime::Mutex;
 
 use crate::errors::AppError;
 use crate::quota::QuotaSnapshot;
+use crate::scheduler::RefreshScheduler;
 use crate::session_manager::SessionManager;
+use crate::settings::AppSettings;
 
 #[derive(Debug, Clone)]
 pub struct TraySnapshot {
@@ -27,8 +29,13 @@ impl TraySnapshot {
 
 pub struct AppState {
     pub codex_home: PathBuf,
+    pub settings_path: PathBuf,
+    pub settings: Mutex<AppSettings>,
+    pub settings_load_issue: Mutex<Option<String>>,
     pub tray_snapshot: Mutex<TraySnapshot>,
     pub session_manager: Mutex<SessionManager>,
+    pub refresh_scheduler: Mutex<RefreshScheduler>,
+    pub refresh_in_progress: Mutex<bool>,
     pub quota_timeout: Duration,
 }
 
