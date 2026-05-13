@@ -9,6 +9,8 @@ pub struct SessionManagerPaths {
     pub node_exe: PathBuf,
     pub server_entry: PathBuf,
     pub app_dir: PathBuf,
+    pub codex_home: PathBuf,
+    pub manager_home: PathBuf,
 }
 
 pub struct SessionManager {
@@ -53,6 +55,8 @@ impl SessionManager {
         command.arg(&self.paths.server_entry);
         command.current_dir(&self.paths.app_dir);
         command.env("PORT", "4318");
+        command.env("CODEX_HOME", &self.paths.codex_home);
+        command.env("CODEX_MANAGER_HOME", &self.paths.manager_home);
         command.stdin(Stdio::null());
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());

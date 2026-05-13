@@ -25,6 +25,7 @@ fn main() {
             let codex_home = resolve_codex_home()
                 .unwrap_or_else(|_| std::path::PathBuf::from(r"C:\.codex-missing"));
             let resource_dir = app.path().resource_dir()?;
+            let app_data_dir = app.path().app_data_dir()?;
             let session_paths = SessionManagerPaths {
                 node_exe: resource_dir.join("NodeRuntime").join("node.exe"),
                 server_entry: resource_dir
@@ -33,6 +34,8 @@ fn main() {
                     .join("server")
                     .join("index.js"),
                 app_dir: resource_dir.join("SessionManager"),
+                codex_home: codex_home.clone(),
+                manager_home: app_data_dir.join("SessionManager"),
             };
 
             let state: SharedAppState = Arc::new(AppState {
