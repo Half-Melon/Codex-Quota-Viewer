@@ -222,23 +222,25 @@ The screenshots in this repository are privacy-safe examples.
 
 ## Requirements
 
+For the macOS menu bar app:
+
 - macOS 13 or later
 - A local Codex installation:
   `Codex.app` in `/Applications`, or a `codex` executable available in `PATH`
 - A signed-in Codex profile in `~/.codex/auth.json`
 
+For the Windows tray MVP:
+
+- Windows 10/11
+- A local `codex` executable available in `PATH`
+- A signed-in Codex profile in `%USERPROFILE%\.codex\auth.json`
+- Build only: Node, Rust/Cargo, and Visual Studio C++ Build Tools
+
 ## Build From Source
 
-## Windows MVP
+### macOS app
 
-This repository also contains a Windows tray MVP design and implementation path.
-The Windows version is a Tauri-based system tray app focused on showing current
-quota, refreshing manually, opening the bundled Session Manager, opening the
-local Codex folder, and quitting cleanly.
-
-See [docs/windows-mvp.md](docs/windows-mvp.md) for scope and build notes.
-
-If you want the full packaged app:
+If you want the full packaged macOS app:
 
 ```bash
 ./scripts/build-app.sh
@@ -261,6 +263,29 @@ If you want the project verification suite:
 ```bash
 ./scripts/verify-all.sh
 ```
+
+### Windows tray MVP
+
+The repository now includes a Tauri-based Windows tray MVP. It focuses on
+showing the current active Codex account quota, refreshing manually, opening the
+bundled Session Manager, opening the local Codex folder, and quitting cleanly.
+
+Build it on Windows:
+
+```powershell
+scripts\build-windows-tray.ps1
+```
+
+The build script stages the bundled Session Manager and Node runtime, then
+produces both installers:
+
+```text
+WindowsTray/src-tauri/target/release/bundle/nsis/Codex Quota Viewer_0.1.0_x64-setup.exe
+WindowsTray/src-tauri/target/release/bundle/msi/Codex Quota Viewer_0.1.0_x64_en-US.msi
+```
+
+See [docs/windows-mvp.md](docs/windows-mvp.md) for Windows scope, deferred
+features, and build notes.
 
 ## Troubleshooting
 
