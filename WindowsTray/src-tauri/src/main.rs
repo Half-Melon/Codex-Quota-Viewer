@@ -8,6 +8,7 @@ use tauri::{AppHandle, Manager};
 mod app_state;
 mod codex_home;
 mod errors;
+mod launch_at_login;
 mod localization;
 mod quota;
 mod session_manager;
