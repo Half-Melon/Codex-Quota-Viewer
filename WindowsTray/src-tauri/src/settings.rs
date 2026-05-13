@@ -5,6 +5,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::errors::AppError;
+use crate::localization::{localize, LocalizedText};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -117,6 +118,113 @@ pub fn save_settings(settings_path: &Path, settings: &AppSettings) -> Result<(),
     fs::write(settings_path, data).map_err(|error| AppError::SettingsSaveFailed(error.to_string()))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectOption {
+    pub value: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsLabels {
+    pub title: String,
+    pub refresh_interval: String,
+    pub language: String,
+    pub tray_style: String,
+    pub launch_at_login: String,
+    pub saved: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsPresentation {
+    pub settings: AppSettings,
+    pub resolved_language: ResolvedAppLanguage,
+    pub labels: SettingsLabels,
+    pub refresh_interval_options: Vec<SelectOption>,
+    pub language_options: Vec<SelectOption>,
+    pub tray_style_options: Vec<SelectOption>,
+    pub message: Option<String>,
+}
+
+pub fn settings_presentation(
+    settings: AppSettings,
+    resolved_language: ResolvedAppLanguage,
+    message: Option<String>,
+) -> SettingsPresentation {
+    SettingsPresentation {
+        settings,
+        resolved_language,
+        labels: SettingsLabels {
+            title: localize(resolved_language, LocalizedText::new("Settings", "设置")),
+            refresh_interval: localize(
+                resolved_language,
+                LocalizedText::new("Refresh interval", "刷新频率"),
+            ),
+            language: localize(resolved_language, LocalizedText::new("Language", "语言")),
+            tray_style: localize(
+                resolved_language,
+                LocalizedText::new("Tray style", "托盘样式"),
+            ),
+            launch_at_login: localize(
+                resolved_language,
+                LocalizedText::new("Launch at login", "登录时启动"),
+            ),
+            saved: localize(resolved_language, LocalizedText::new("Saved", "已保存")),
+        },
+        refresh_interval_options: vec![
+            SelectOption {
+                value: "manual".into(),
+                label: localize(resolved_language, LocalizedText::new("Manual", "手动")),
+            },
+            SelectOption {
+                value: "oneMinute".into(),
+                label: localize(resolved_language, LocalizedText::new("1 minute", "1 分钟")),
+            },
+            SelectOption {
+                value: "fiveMinutes".into(),
+                label: localize(resolved_language, LocalizedText::new("5 minutes", "5 分钟")),
+            },
+            SelectOption {
+                value: "fifteenMinutes".into(),
+                label: localize(
+                    resolved_language,
+                    LocalizedText::new("15 minutes", "15 分钟"),
+                ),
+            },
+        ],
+        language_options: vec![
+            SelectOption {
+                value: "system".into(),
+                label: localize(
+                    resolved_language,
+                    LocalizedText::new("Follow System", "跟随系统"),
+                ),
+            },
+            SelectOption {
+                value: "english".into(),
+                label: localize(resolved_language, LocalizedText::new("English", "英文")),
+            },
+            SelectOption {
+                value: "chinese".into(),
+                label: localize(resolved_language, LocalizedText::new("Chinese", "中文")),
+            },
+        ],
+        tray_style_options: vec![
+            SelectOption {
+                value: "meter".into(),
+                label: localize(resolved_language, LocalizedText::new("Meter", "仪表")),
+            },
+            SelectOption {
+                value: "text".into(),
+                label: localize(resolved_language, LocalizedText::new("Text", "文字")),
+            },
+        ],
+        message,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,5 +302,38 @@ mod tests {
             RefreshIntervalPreset::FifteenMinutes.interval(),
             Some(Duration::from_secs(900))
         );
+    }
+
+    #[test]
+    fn builds_english_settings_presentation() {
+        let presentation =
+            settings_presentation(AppSettings::default(), ResolvedAppLanguage::English, None);
+
+        assert_eq!(presentation.labels.title, "Settings");
+        assert_eq!(presentation.labels.saved, "Saved");
+        assert_eq!(presentation.refresh_interval_options[0].value, "manual");
+        assert_eq!(presentation.refresh_interval_options[0].label, "Manual");
+        assert_eq!(presentation.language_options[0].value, "system");
+        assert_eq!(presentation.tray_style_options[1].value, "text");
+        assert_eq!(presentation.message, None);
+    }
+
+    #[test]
+    fn builds_chinese_settings_presentation() {
+        let presentation = settings_presentation(
+            AppSettings {
+                app_language: AppLanguage::Chinese,
+                last_resolved_language: Some(ResolvedAppLanguage::Chinese),
+                ..AppSettings::default()
+            },
+            ResolvedAppLanguage::Chinese,
+            Some("已保存".to_string()),
+        );
+
+        assert_eq!(presentation.labels.title, "设置");
+        assert_eq!(presentation.labels.refresh_interval, "刷新频率");
+        assert_eq!(presentation.language_options[2].value, "chinese");
+        assert_eq!(presentation.language_options[2].label, "中文");
+        assert_eq!(presentation.message.as_deref(), Some("已保存"));
     }
 }
