@@ -10,6 +10,7 @@ mod codex_home;
 mod errors;
 mod quota;
 mod session_manager;
+mod settings;
 mod tray;
 
 use app_state::{AppState, SharedAppState, TraySnapshot};

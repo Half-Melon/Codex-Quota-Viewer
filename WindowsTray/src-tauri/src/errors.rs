@@ -10,6 +10,9 @@ pub enum AppError {
     SessionManagerFilesIncomplete,
     NodeRuntimeMissing,
     SessionManagerStartFailed(String),
+    SettingsLoadFailed(String),
+    SettingsSaveFailed(String),
+    LaunchAtLoginFailed(String),
 }
 
 impl AppError {
@@ -23,14 +26,19 @@ impl AppError {
             Self::SessionManagerFilesIncomplete => "Bundled Session Manager files are incomplete",
             Self::NodeRuntimeMissing => "Bundled Node runtime is missing",
             Self::SessionManagerStartFailed(_) => "Session Manager could not start",
+            Self::SettingsLoadFailed(_) => "Settings could not be loaded",
+            Self::SettingsSaveFailed(_) => "Settings could not be saved",
+            Self::LaunchAtLoginFailed(_) => "Launch at login could not be updated",
         }
     }
 
     pub fn diagnostics(&self) -> Option<&str> {
         match self {
-            Self::QuotaRefreshFailed(message) | Self::SessionManagerStartFailed(message) => {
-                Some(message)
-            }
+            Self::QuotaRefreshFailed(message)
+            | Self::SessionManagerStartFailed(message)
+            | Self::SettingsLoadFailed(message)
+            | Self::SettingsSaveFailed(message)
+            | Self::LaunchAtLoginFailed(message) => Some(message),
             _ => None,
         }
     }

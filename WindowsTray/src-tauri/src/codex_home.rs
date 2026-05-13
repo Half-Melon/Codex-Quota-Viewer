@@ -23,7 +23,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    fn env_from(values: HashMap<&str, &str>) -> impl Fn(&str) -> Option<String> {
+    fn env_from(values: HashMap<&'static str, &'static str>) -> impl Fn(&str) -> Option<String> {
         move |key| values.get(key).map(|value| value.to_string())
     }
 
