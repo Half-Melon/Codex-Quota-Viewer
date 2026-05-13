@@ -229,6 +229,15 @@ The screenshots in this repository are privacy-safe examples.
 
 ## Build From Source
 
+## Windows MVP
+
+This repository also contains a Windows tray MVP design and implementation path.
+The Windows version is a Tauri-based system tray app focused on showing current
+quota, refreshing manually, opening the bundled Session Manager, opening the
+local Codex folder, and quitting cleanly.
+
+See [docs/windows-mvp.md](docs/windows-mvp.md) for scope and build notes.
+
 If you want the full packaged app:
 
 ```bash
