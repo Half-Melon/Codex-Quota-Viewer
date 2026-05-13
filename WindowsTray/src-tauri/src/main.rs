@@ -18,17 +18,86 @@ mod tray;
 
 use app_state::{AppState, SharedAppState, TraySnapshot};
 use codex_home::resolve_codex_home;
-use localization::resolve_language;
+use errors::AppError;
+use launch_at_login::{apply_settings_transaction, WindowsRunKeyLaunchAtLogin};
+use localization::{app_error_message, localize, resolve_language, LocalizedText};
 use quota::fetch_current_quota;
 use scheduler::RefreshScheduler;
 use session_manager::{SessionManager, SessionManagerPaths};
-use settings::{load_settings, AppSettings};
+use settings::{
+    load_settings, save_settings, settings_presentation, AppSettings, SettingsPresentation,
+};
 use tray::{
     MENU_OPEN_CODEX_FOLDER, MENU_OPEN_SESSION_MANAGER, MENU_QUIT, MENU_REFRESH, MENU_SETTINGS,
 };
 
+#[tauri::command]
+async fn get_settings(
+    state: tauri::State<'_, SharedAppState>,
+) -> Result<SettingsPresentation, String> {
+    let app_state = state.inner().clone();
+    let mut settings = app_state.settings.lock().await.clone();
+    let issue = app_state.settings_load_issue.lock().await.clone();
+    let resolved = resolve_language(settings.app_language, &system_language_hints());
+    settings.last_resolved_language = Some(resolved);
+
+    Ok(settings_presentation(settings, resolved, issue))
+}
+
+#[tauri::command]
+async fn update_settings(
+    app: AppHandle,
+    state: tauri::State<'_, SharedAppState>,
+    mut updated: AppSettings,
+) -> Result<SettingsPresentation, String> {
+    let app_state = state.inner().clone();
+    let previous = app_state.settings.lock().await.clone();
+    let resolved = resolve_language(updated.app_language, &system_language_hints());
+    updated.last_resolved_language = Some(resolved);
+
+    let settings_path = app_state.settings_path.clone();
+    let launch_changed = previous.launch_at_login_enabled != updated.launch_at_login_enabled;
+    let exe_path = if launch_changed {
+        std::env::current_exe()
+            .map_err(|error| AppError::LaunchAtLoginFailed(error.to_string()))
+            .map_err(|error| app_error_message(resolved, &error))?
+            .to_string_lossy()
+            .to_string()
+    } else {
+        String::new()
+    };
+    let mut launch_manager = WindowsRunKeyLaunchAtLogin::new("Codex Quota Viewer", exe_path);
+
+    let saved = apply_settings_transaction(previous, updated, &mut launch_manager, |settings| {
+        save_settings(&settings_path, settings)
+    })
+    .map_err(|error| app_error_message(resolved, &error))?;
+
+    {
+        let mut current = app_state.settings.lock().await;
+        *current = saved.clone();
+    }
+    {
+        let mut issue = app_state.settings_load_issue.lock().await;
+        *issue = None;
+    }
+
+    restart_refresh_scheduler(app.clone(), app_state.clone(), saved.clone());
+    update_tray_from_state(&app, &app_state).await;
+
+    Ok(settings_presentation(
+        saved,
+        resolved,
+        Some(localize(
+            resolved,
+            LocalizedText::new("Saved", "\u{5bb8}\u{8e6d}\u{7e5a}\u{701b}?"),
+        )),
+    ))
+}
+
 fn main() {
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![get_settings, update_settings])
         .setup(|app| {
             let app_handle = app.handle().clone();
             let codex_home = resolve_codex_home()
