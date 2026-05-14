@@ -1,0 +1,83 @@
+:root {
+  color-scheme: light dark;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  color: CanvasText;
+  background: Canvas;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 360px;
+  background: Canvas;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+.settings-shell {
+  padding: 22px 24px;
+}
+
+.settings-header {
+  margin-bottom: 18px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.settings-form {
+  display: grid;
+  gap: 14px;
+}
+
+.settings-row {
+  display: grid;
+  grid-template-columns: 150px minmax(180px, 1fr);
+  align-items: center;
+  gap: 14px;
+  font-size: 13px;
+}
+
+.settings-row span,
+.settings-check span {
+  line-height: 1.35;
+}
+
+select {
+  width: 100%;
+  min-height: 30px;
+  padding: 3px 8px;
+}
+
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 30px;
+  font-size: 13px;
+}
+
+.settings-check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.settings-status {
+  min-height: 18px;
+  margin: 18px 0 0;
+  color: GrayText;
+  font-size: 12px;
+  line-height: 1.4;
+}

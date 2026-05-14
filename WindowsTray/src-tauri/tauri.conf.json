@@ -12,10 +12,11 @@
   "app": {
     "windows": [
       {
-        "title": "Codex Quota Viewer",
-        "width": 480,
-        "height": 240,
-        "visible": false
+        "title": "Codex Quota Viewer Settings",
+        "width": 520,
+        "height": 340,
+        "visible": false,
+        "resizable": false
       }
     ],
     "security": {
