@@ -6,6 +6,9 @@ The Windows MVP is a Tauri-based system tray app for Codex Quota Viewer.
 
 - Shows the current active Codex account quota in the Windows system tray menu.
 - Supports manual quota refresh.
+- Opens a General settings window from the tray.
+- Persists refresh interval, language, tray style, and launch-at-login settings.
+- Supports automatic quota refresh when the refresh interval is not `Manual`.
 - Opens the bundled Session Manager on `http://127.0.0.1:4318`.
 - Opens the local Codex folder.
 - Quits cleanly and stops only the Session Manager process it started.
@@ -20,8 +23,7 @@ The MVP reads the active Codex profile from `%USERPROFILE%\.codex` unless
 - Multiple saved accounts.
 - Safe account switching.
 - Rollback restore points.
-- Full settings UI.
-- Launch at login.
+- Accounts settings beyond the General settings page.
 
 ## Build
 

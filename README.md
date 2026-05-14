@@ -266,9 +266,10 @@ If you want the project verification suite:
 
 ### Windows tray MVP
 
-The repository now includes a Tauri-based Windows tray MVP. It focuses on
-showing the current active Codex account quota, refreshing manually, opening the
-bundled Session Manager, opening the local Codex folder, and quitting cleanly.
+The repository now includes a Tauri-based Windows tray app. It focuses on
+showing the current active Codex account quota, configurable refresh behavior,
+a small General settings window, opening the bundled Session Manager, opening
+the local Codex folder, and quitting cleanly.
 
 Build it on Windows:
 
