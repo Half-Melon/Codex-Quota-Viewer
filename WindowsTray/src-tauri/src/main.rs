@@ -90,7 +90,7 @@ async fn update_settings(
         resolved,
         Some(localize(
             resolved,
-            LocalizedText::new("Saved", "\u{5bb8}\u{8e6d}\u{7e5a}\u{701b}?"),
+            LocalizedText::new("Saved", "\u{5df2}\u{4fdd}\u{5b58}"),
         )),
     ))
 }
