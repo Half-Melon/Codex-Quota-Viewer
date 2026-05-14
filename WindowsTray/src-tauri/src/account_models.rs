@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -109,6 +110,13 @@ pub struct AddApiAccountInput {
     pub provider_name: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidatedApiAccountInput {
+    pub display_name: String,
+    pub payload: ApiAccountPayload,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccountValidationError {
     MissingDisplayName,
@@ -118,7 +126,7 @@ pub enum AccountValidationError {
 }
 
 impl AddApiAccountInput {
-    pub fn validate(self) -> Result<ApiAccountPayload, AccountValidationError> {
+    pub fn validate(self) -> Result<ValidatedApiAccountInput, AccountValidationError> {
         let display_name = self.display_name.trim();
         if display_name.is_empty() {
             return Err(AccountValidationError::MissingDisplayName);
@@ -133,17 +141,27 @@ impl AddApiAccountInput {
         if base_url.is_empty() {
             return Err(AccountValidationError::MissingBaseUrl);
         }
-        if !base_url.starts_with("http://") && !base_url.starts_with("https://") {
-            return Err(AccountValidationError::InvalidBaseUrl);
-        }
+        let base_url = normalize_base_url(base_url)?;
 
-        Ok(ApiAccountPayload {
-            api_key: api_key.to_string(),
-            base_url: base_url.trim_end_matches('/').to_string(),
-            model: trim_optional(self.model),
-            provider_name: trim_optional(self.provider_name),
+        Ok(ValidatedApiAccountInput {
+            display_name: display_name.to_string(),
+            payload: ApiAccountPayload {
+                api_key: api_key.to_string(),
+                base_url,
+                model: trim_optional(self.model),
+                provider_name: trim_optional(self.provider_name),
+            },
         })
     }
+}
+
+fn normalize_base_url(base_url: &str) -> Result<String, AccountValidationError> {
+    let parsed = Url::parse(base_url).map_err(|_| AccountValidationError::InvalidBaseUrl)?;
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        return Err(AccountValidationError::InvalidBaseUrl);
+    }
+
+    Ok(parsed.as_str().trim_end_matches('/').to_string())
 }
 
 fn trim_optional(value: Option<String>) -> Option<String> {
@@ -181,16 +199,74 @@ mod tests {
             now,
         );
 
-        let serialized = serde_json::to_string(&record).unwrap();
+        let value = serde_json::to_value(&record).unwrap();
 
-        assert!(serialized.contains("\"displayName\""));
-        assert!(serialized.contains("\"type\":\"chatGpt\""));
-        assert!(serialized.contains("\"authJson\""));
+        assert_eq!(
+            value,
+            json!({
+                "version": 1,
+                "id": "chatgpt-primary",
+                "metadata": {
+                    "displayName": "ChatGPT Primary",
+                    "kind": "chatGpt",
+                    "createdAt": "2026-05-14T08:30:00Z",
+                    "updatedAt": "2026-05-14T08:30:00Z"
+                },
+                "payload": {
+                    "type": "chatGpt",
+                    "authJson": {
+                        "token": "secret"
+                    }
+                }
+            })
+        );
+
+        let deserialized: VaultAccountRecord = serde_json::from_value(value).unwrap();
+        assert_eq!(deserialized, record);
+    }
+
+    #[test]
+    fn serializes_api_record_with_camel_case_fields() {
+        let now = Utc.with_ymd_and_hms(2026, 5, 14, 8, 30, 0).unwrap();
+        let payload = ApiAccountPayload {
+            api_key: "sk-test".to_string(),
+            base_url: "https://api.openai.com/v1".to_string(),
+            model: Some("gpt-5".to_string()),
+            provider_name: Some("OpenAI".to_string()),
+        };
+        let record =
+            VaultAccountRecord::new_api(AccountId::new("api-openai"), "OpenAI", payload, now);
+
+        let value = serde_json::to_value(&record).unwrap();
+
+        assert_eq!(
+            value,
+            json!({
+                "version": 1,
+                "id": "api-openai",
+                "metadata": {
+                    "displayName": "OpenAI",
+                    "kind": "api",
+                    "createdAt": "2026-05-14T08:30:00Z",
+                    "updatedAt": "2026-05-14T08:30:00Z"
+                },
+                "payload": {
+                    "type": "api",
+                    "apiKey": "sk-test",
+                    "baseUrl": "https://api.openai.com/v1",
+                    "model": "gpt-5",
+                    "providerName": "OpenAI"
+                }
+            })
+        );
+
+        let deserialized: VaultAccountRecord = serde_json::from_value(value).unwrap();
+        assert_eq!(deserialized, record);
     }
 
     #[test]
     fn validates_api_account_input() {
-        let payload = AddApiAccountInput {
+        let validated = AddApiAccountInput {
             display_name: " OpenAI ".to_string(),
             api_key: " sk-test ".to_string(),
             base_url: " https://api.openai.com/v1/ ".to_string(),
@@ -200,6 +276,8 @@ mod tests {
         .validate()
         .unwrap();
 
+        let payload = validated.payload;
+        assert_eq!(validated.display_name, "OpenAI");
         assert_eq!(payload.api_key, "sk-test");
         assert_eq!(payload.base_url, "https://api.openai.com/v1");
         assert_eq!(payload.model, Some("gpt-5".to_string()));
@@ -222,15 +300,22 @@ mod tests {
 
     #[test]
     fn rejects_non_url_base_url() {
-        let result = AddApiAccountInput {
-            display_name: "OpenAI".to_string(),
-            api_key: "sk-test".to_string(),
-            base_url: "api.openai.com/v1".to_string(),
-            model: None,
-            provider_name: None,
-        }
-        .validate();
+        for base_url in [
+            "api.openai.com/v1",
+            "https://",
+            "https:///",
+            "file:///tmp/key",
+        ] {
+            let result = AddApiAccountInput {
+                display_name: "OpenAI".to_string(),
+                api_key: "sk-test".to_string(),
+                base_url: base_url.to_string(),
+                model: None,
+                provider_name: None,
+            }
+            .validate();
 
-        assert_eq!(result, Err(AccountValidationError::InvalidBaseUrl));
+            assert_eq!(result, Err(AccountValidationError::InvalidBaseUrl));
+        }
     }
 }
