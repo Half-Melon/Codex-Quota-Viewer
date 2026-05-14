@@ -1,3 +1,4 @@
+use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -148,7 +149,8 @@ fn fetch_current_quota_blocking(
     timeout_duration: Duration,
 ) -> Result<QuotaSnapshot, AppError> {
     let deadline = Instant::now() + timeout_duration;
-    let mut child = codex_command(&codex_home)?;
+    let runtime = TemporaryCodexRuntime::create(&codex_home)?;
+    let mut child = codex_command(&runtime.home_dir, &runtime.codex_home_dir)?;
     let mut stdin = child
         .stdin
         .take()
@@ -185,19 +187,114 @@ fn fetch_current_quota_blocking(
     let stderr_text = stderr_thread.join().unwrap_or_default();
 
     match result {
-        Err(AppError::QuotaRefreshFailed(message)) if !stderr_text.trim().is_empty() => {
-            Err(AppError::QuotaRefreshFailed(format!(
-                "{message}: {}",
-                stderr_text.trim()
-            )))
-        }
+        Err(AppError::QuotaRefreshFailed(message)) if !stderr_text.trim().is_empty() => Err(
+            AppError::QuotaRefreshFailed(format!("{message}: {}", stderr_text.trim())),
+        ),
         other => other,
     }
 }
 
-fn codex_command(codex_home: &Path) -> Result<Child, AppError> {
+struct TemporaryCodexRuntime {
+    home_dir: PathBuf,
+    codex_home_dir: PathBuf,
+}
+
+impl TemporaryCodexRuntime {
+    fn create(source_codex_home: &Path) -> Result<Self, AppError> {
+        let unique = format!(
+            "codex-quota-viewer-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        let (home_dir, codex_home_dir) = create_temporary_runtime_dirs(&unique)?;
+
+        copy_required_file(source_codex_home, &codex_home_dir, "auth.json")?;
+        copy_optional_file(source_codex_home, &codex_home_dir, "config.toml")?;
+
+        Ok(Self {
+            home_dir,
+            codex_home_dir,
+        })
+    }
+}
+
+fn create_temporary_runtime_dirs(unique: &str) -> Result<(PathBuf, PathBuf), AppError> {
+    let mut last_error: Option<std::io::Error> = None;
+
+    for root in quota_runtime_roots() {
+        let home_dir = root.join(unique);
+        let codex_home_dir = home_dir.join(".codex");
+        match fs::create_dir_all(&codex_home_dir) {
+            Ok(()) => return Ok((home_dir, codex_home_dir)),
+            Err(error) => last_error = Some(error),
+        }
+    }
+
+    Err(AppError::QuotaRefreshFailed(
+        last_error
+            .map(|error| error.to_string())
+            .unwrap_or_else(|| "could not create temporary Codex runtime".to_string()),
+    ))
+}
+
+fn quota_runtime_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        roots.push(
+            PathBuf::from(local_app_data)
+                .join("CodexQuotaViewer")
+                .join("QuotaRuntime"),
+        );
+    }
+
+    roots.push(
+        std::env::temp_dir()
+            .join("CodexQuotaViewer")
+            .join("QuotaRuntime"),
+    );
+
+    roots
+}
+
+impl Drop for TemporaryCodexRuntime {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.home_dir);
+    }
+}
+
+fn copy_required_file(
+    source_dir: &Path,
+    target_dir: &Path,
+    file_name: &str,
+) -> Result<(), AppError> {
+    let source = source_dir.join(file_name);
+    let target = target_dir.join(file_name);
+    if !source.exists() {
+        return Err(AppError::SignInRequired);
+    }
+    fs::copy(source, target).map_err(|error| AppError::QuotaRefreshFailed(error.to_string()))?;
+    Ok(())
+}
+
+fn copy_optional_file(
+    source_dir: &Path,
+    target_dir: &Path,
+    file_name: &str,
+) -> Result<(), AppError> {
+    let source = source_dir.join(file_name);
+    if source.exists() {
+        fs::copy(source, target_dir.join(file_name))
+            .map_err(|error| AppError::QuotaRefreshFailed(error.to_string()))?;
+    }
+    Ok(())
+}
+
+fn codex_command(home: &Path, codex_home: &Path) -> Result<Child, AppError> {
     Command::new("codex")
         .args(["-s", "read-only", "-a", "untrusted", "app-server"])
+        .current_dir(home)
+        .env("HOME", home)
         .env("CODEX_HOME", codex_home)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -240,12 +337,7 @@ fn read_quota_from_rpc(
         );
     }
 
-    send_rpc_line(
-        stdin,
-        "3",
-        "account/rateLimits/read",
-        serde_json::json!({}),
-    )?;
+    send_rpc_line(stdin, "3", "account/rateLimits/read", serde_json::json!({}))?;
     let rate_limits = read_rpc_response(line_receiver, "3", deadline)?;
 
     parse_snapshot_from_rpc_values(account, rate_limits)
@@ -309,10 +401,9 @@ fn read_rpc_response(
         }
 
         if message.get("id").and_then(|value| value.as_str()) == Some(request_id) {
-            return message
-                .get("result")
-                .cloned()
-                .ok_or_else(|| AppError::QuotaRefreshFailed(format!("{request_id} missing result")));
+            return message.get("result").cloned().ok_or_else(|| {
+                AppError::QuotaRefreshFailed(format!("{request_id} missing result"))
+            });
         }
     }
 }

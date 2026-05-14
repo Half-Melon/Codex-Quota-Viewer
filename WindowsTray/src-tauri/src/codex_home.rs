@@ -6,7 +6,9 @@ pub fn resolve_codex_home() -> Result<PathBuf, AppError> {
     resolve_codex_home_from_env(&|key| std::env::var(key).ok())
 }
 
-pub fn resolve_codex_home_from_env(env: &dyn Fn(&str) -> Option<String>) -> Result<PathBuf, AppError> {
+pub fn resolve_codex_home_from_env(
+    env: &dyn Fn(&str) -> Option<String>,
+) -> Result<PathBuf, AppError> {
     if let Some(explicit) = env("CODEX_HOME").filter(|value| !value.trim().is_empty()) {
         return Ok(PathBuf::from(explicit));
     }
