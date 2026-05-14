@@ -13,6 +13,10 @@ pub enum AppError {
     SettingsLoadFailed(String),
     SettingsSaveFailed(String),
     LaunchAtLoginFailed(String),
+    AccountVaultFailed(String),
+    AccountValidationFailed(String),
+    AccountNotFound(String),
+    AccountActivationFailed(String),
 }
 
 impl AppError {
@@ -29,6 +33,10 @@ impl AppError {
             Self::SettingsLoadFailed(_) => "Settings could not be loaded",
             Self::SettingsSaveFailed(_) => "Settings could not be saved",
             Self::LaunchAtLoginFailed(_) => "Launch at login could not be updated",
+            Self::AccountVaultFailed(_) => "Account vault operation failed",
+            Self::AccountValidationFailed(_) => "Account information is invalid",
+            Self::AccountNotFound(_) => "Account not found",
+            Self::AccountActivationFailed(_) => "Account activation failed",
         }
     }
 
@@ -38,7 +46,11 @@ impl AppError {
             | Self::SessionManagerStartFailed(message)
             | Self::SettingsLoadFailed(message)
             | Self::SettingsSaveFailed(message)
-            | Self::LaunchAtLoginFailed(message) => Some(message),
+            | Self::LaunchAtLoginFailed(message)
+            | Self::AccountVaultFailed(message)
+            | Self::AccountValidationFailed(message)
+            | Self::AccountNotFound(message)
+            | Self::AccountActivationFailed(message) => Some(message),
             _ => None,
         }
     }

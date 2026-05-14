@@ -76,6 +76,20 @@ pub fn app_error_message(language: ResolvedAppLanguage, error: &AppError) -> Str
         AppError::LaunchAtLoginFailed(_) => {
             LocalizedText::new("Launch at login could not be updated", "登录时启动无法更新")
         }
+        AppError::AccountVaultFailed(_) => LocalizedText::new(
+            "Account vault operation failed",
+            "Account vault operation failed",
+        ),
+        AppError::AccountValidationFailed(_) => LocalizedText::new(
+            "Account information is invalid",
+            "Account information is invalid",
+        ),
+        AppError::AccountNotFound(_) => {
+            LocalizedText::new("Account not found", "Account not found")
+        }
+        AppError::AccountActivationFailed(_) => {
+            LocalizedText::new("Account activation failed", "Account activation failed")
+        }
     };
     localize(language, text)
 }

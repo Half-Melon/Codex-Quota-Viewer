@@ -6,6 +6,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
 mod account_models;
+mod account_vault;
 mod app_state;
 mod codex_home;
 mod errors;
