@@ -2,12 +2,12 @@
 
 # Codex Quota Viewer
 
-> 当前正式版：`1.1.0`
+> 当前正式版：`1.1.1`
 >
-> 1.1.0 更新：
-> - 提升额度刷新与复用 RPC 通道生命周期的稳定性，并为 Maintenance 刷新动作补充可见进度提示。
-> - 强化安全切换流程，补齐 restore point 保护覆盖、线程/provider 修复链路，以及 Profile 路径规范化处理。
-> - 将 Settings 界面拆分为独立视图，并补齐本地线程检查相关文案的应用内中英文本地化。
+> 1.1.1 更新：
+> - 新增 Windows 托盘版本作为发布目标。
+> - 提供由 Tauri 托盘应用构建的 Windows 安装包。
+> - 将 Windows 应用版本号与主发布版本保持一致。
 
 Codex Quota Viewer 是一个原生 macOS 菜单栏应用。它把 Codex 用户最常做的几件
 事放到一个入口里：看当前额度、管理多个账号、安全切换账号、浏览和修复本地会话。
@@ -253,8 +253,8 @@ scripts\build-windows-tray.ps1
 构建脚本会暂存内置的 Session Manager 和 Node 运行时，然后生成两种安装包：
 
 ```text
-WindowsTray/src-tauri/target/release/bundle/nsis/Codex Quota Viewer_0.1.0_x64-setup.exe
-WindowsTray/src-tauri/target/release/bundle/msi/Codex Quota Viewer_0.1.0_x64_en-US.msi
+WindowsTray/src-tauri/target/release/bundle/nsis/Codex Quota Viewer_1.1.1_x64-setup.exe
+WindowsTray/src-tauri/target/release/bundle/msi/Codex Quota Viewer_1.1.1_x64_en-US.msi
 ```
 
 参阅 [docs/windows-mvp.md](docs/windows-mvp.md) 了解 Windows 版本的范围、延后支持的功能以及构建说明。

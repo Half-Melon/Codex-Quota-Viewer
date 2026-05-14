@@ -5,6 +5,8 @@ dist/
 Vendor/CodexMM/node_modules/
 Vendor/CodexMM/dist/
 docs/*
+!docs/releases/
+!docs/releases/*.md
 !docs/images/
 docs/images/*
 !docs/images/menu-screenshot.png

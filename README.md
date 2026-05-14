@@ -2,12 +2,12 @@ English | [中文](README.zh-CN.md)
 
 # Codex Quota Viewer
 
-> Stable release: `1.1.0`
+> Stable release: `1.1.1`
 >
-> 1.1.0 update:
-> - Makes quota refresh and reusable RPC channel lifecycle more stable, and adds visible refresh progress in maintenance actions.
-> - Hardens safe account switching with better restore-point file coverage, thread/provider repair flow, and normalized profile path handling.
-> - Splits the Settings UI into dedicated views and localizes local-thread inspection messages for the released app.
+> 1.1.1 update:
+> - Adds the Windows tray version as a release target.
+> - Provides Windows installers built from the Tauri tray app.
+> - Keeps the Windows app version aligned with the main release version.
 
 Codex Quota Viewer is a native macOS menu bar app for people who use Codex and
 want everything in one place: current quota, saved accounts, safe account
@@ -281,8 +281,8 @@ The build script stages the bundled Session Manager and Node runtime, then
 produces both installers:
 
 ```text
-WindowsTray/src-tauri/target/release/bundle/nsis/Codex Quota Viewer_0.1.0_x64-setup.exe
-WindowsTray/src-tauri/target/release/bundle/msi/Codex Quota Viewer_0.1.0_x64_en-US.msi
+WindowsTray/src-tauri/target/release/bundle/nsis/Codex Quota Viewer_1.1.1_x64-setup.exe
+WindowsTray/src-tauri/target/release/bundle/msi/Codex Quota Viewer_1.1.1_x64_en-US.msi
 ```
 
 See [docs/windows-mvp.md](docs/windows-mvp.md) for Windows scope, deferred
