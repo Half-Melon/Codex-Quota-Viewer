@@ -291,7 +291,7 @@ fn copy_optional_file(
 }
 
 fn codex_command(home: &Path, codex_home: &Path) -> Result<Child, AppError> {
-    Command::new("codex")
+    Command::new(resolve_codex_executable())
         .args(["-s", "read-only", "-a", "untrusted", "app-server"])
         .current_dir(home)
         .env("HOME", home)
@@ -301,6 +301,38 @@ fn codex_command(home: &Path, codex_home: &Path) -> Result<Child, AppError> {
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| AppError::QuotaRefreshFailed(error.to_string()))
+}
+
+fn resolve_codex_executable() -> PathBuf {
+    for candidate in codex_executable_candidates() {
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+
+    PathBuf::from("codex")
+}
+
+fn codex_executable_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        candidates.push(
+            PathBuf::from(&local_app_data)
+                .join("OpenAI")
+                .join("Codex")
+                .join("bin")
+                .join("codex.exe"),
+        );
+        candidates.push(
+            PathBuf::from(&local_app_data)
+                .join("Programs")
+                .join("Codex")
+                .join("codex.exe"),
+        );
+    }
+
+    candidates
 }
 
 fn read_quota_from_rpc(
