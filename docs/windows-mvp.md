@@ -12,18 +12,29 @@ The Windows MVP is a Tauri-based system tray app for Codex Quota Viewer.
 - Opens the bundled Session Manager on `http://127.0.0.1:4318`.
 - Opens the local Codex folder.
 - Quits cleanly and stops only the Session Manager process it started.
+- Saves multiple ChatGPT and API accounts in a local Windows account vault.
+- Imports the current local ChatGPT Codex login as a saved account.
+- Adds OpenAI-compatible API accounts from the Windows settings window.
+- Activates saved accounts directly into the resolved Codex home.
+- Shows saved accounts in an `All Accounts` tray submenu.
 
 ## Local Data
 
 The MVP reads the active Codex profile from `%USERPROFILE%\.codex` unless
 `CODEX_HOME` is set.
 
+## Account Activation
+
+Windows account activation currently writes directly into the resolved Codex
+home. It does not yet create restore points or perform the full Safe Switch
+repair flow available in the macOS app. Use the confirmation prompt as the
+boundary for this direct activation behavior.
+
 ## Not Included In The MVP
 
-- Multiple saved accounts.
-- Safe account switching.
+- Full Safe Switch orchestration.
 - Rollback restore points.
-- Accounts settings beyond the General settings page.
+- Thread/provider repair after account activation.
 
 ## Build
 

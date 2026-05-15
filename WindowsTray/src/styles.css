@@ -81,3 +81,55 @@ select {
   font-size: 12px;
   line-height: 1.4;
 }
+
+.settings-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.settings-tabs button.active {
+  font-weight: 700;
+}
+
+.accounts-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.accounts-toolbar,
+.account-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.api-form {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.api-form[hidden] {
+  display: none;
+}
+
+.account-list {
+  display: grid;
+  gap: 8px;
+}
+
+.account-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid #d6d6d6;
+  border-radius: 8px;
+}
+
+.account-row strong,
+.account-row span,
+.account-row small {
+  display: block;
+}

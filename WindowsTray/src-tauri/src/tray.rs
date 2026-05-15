@@ -1,21 +1,32 @@
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIconBuilder;
 use tauri::AppHandle;
 
+use crate::account_commands::AccountsPresentation;
 use crate::app_state::TraySnapshot;
 use crate::localization::{app_error_message, localize, LocalizedText};
 use crate::settings::ResolvedAppLanguage;
 
+pub const MENU_ALL_ACCOUNTS: &str = "all_accounts";
+pub const MENU_ACCOUNT_PREFIX: &str = "activate_account:";
 pub const MENU_REFRESH: &str = "refresh_quota";
 pub const MENU_SETTINGS: &str = "settings";
 pub const MENU_OPEN_SESSION_MANAGER: &str = "open_session_manager";
 pub const MENU_OPEN_CODEX_FOLDER: &str = "open_codex_folder";
 pub const MENU_QUIT: &str = "quit";
 
+pub fn account_id_from_menu_id(menu_id: &str) -> Option<String> {
+    menu_id
+        .strip_prefix(MENU_ACCOUNT_PREFIX)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
 pub fn build_menu(
     app: &AppHandle,
     snapshot: &TraySnapshot,
     language: ResolvedAppLanguage,
+    accounts: Option<&AccountsPresentation>,
 ) -> tauri::Result<Menu<tauri::Wry>> {
     let title = if snapshot.is_refreshing {
         localize(
@@ -107,20 +118,81 @@ pub fn build_menu(
     let separator_a = PredefinedMenuItem::separator(app)?;
     let separator_b = PredefinedMenuItem::separator(app)?;
 
-    Menu::with_items(
+    let all_accounts_item = MenuItem::with_id(
         app,
-        &[
-            &title_item,
-            &quota_item,
-            &separator_a,
-            &refresh_item,
-            &settings_item,
-            &open_manager_item,
-            &open_folder_item,
-            &separator_b,
-            &quit_item,
-        ],
-    )
+        MENU_ALL_ACCOUNTS,
+        localize(
+            language,
+            LocalizedText::new("All Accounts", "\u{5168}\u{90e8}\u{8d26}\u{53f7}"),
+        ),
+        true,
+        None::<&str>,
+    )?;
+
+    let accounts_submenu = if let Some(accounts_presentation) = accounts {
+        let mut account_items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = Vec::new();
+        if accounts_presentation.rows.is_empty() {
+            account_items.push(Box::new(MenuItem::with_id(
+                app,
+                "no_accounts",
+                localize(
+                    language,
+                    LocalizedText::new("No saved accounts", "\u{6682}\u{65e0}\u{5df2}\u{4fdd}\u{5b58}\u{8d26}\u{53f7}"),
+                ),
+                false,
+                None::<&str>,
+            )?));
+        } else {
+            for row in &accounts_presentation.rows {
+                let menu_id = format!("{}{}", MENU_ACCOUNT_PREFIX, row.id);
+                account_items.push(Box::new(MenuItem::with_id(
+                    app,
+                    menu_id,
+                    row.display_name.clone(),
+                    true,
+                    None::<&str>,
+                )?));
+            }
+        }
+        let account_refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> =
+            account_items.iter().map(|item| item.as_ref()).collect();
+        Some(Submenu::with_items(
+            app,
+            localize(
+                language,
+                LocalizedText::new("All Accounts", "\u{5168}\u{90e8}\u{8d26}\u{53f7}"),
+            ),
+            true,
+            &account_refs,
+        )?)
+    } else {
+        None
+    };
+
+    let mut menu_items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = vec![
+        Box::new(title_item),
+        Box::new(quota_item),
+        Box::new(separator_a),
+    ];
+
+    if let Some(submenu) = accounts_submenu {
+        menu_items.push(Box::new(submenu));
+    } else {
+        menu_items.push(Box::new(all_accounts_item));
+    }
+
+    menu_items.extend([
+        Box::new(refresh_item) as Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>,
+        Box::new(settings_item),
+        Box::new(open_manager_item),
+        Box::new(open_folder_item),
+        Box::new(separator_b),
+        Box::new(quit_item),
+    ]);
+
+    let item_refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> =
+        menu_items.iter().map(|item| item.as_ref()).collect();
+    Menu::with_items(app, &item_refs)
 }
 
 pub fn quota_label(snapshot: &TraySnapshot, language: ResolvedAppLanguage) -> String {
@@ -159,8 +231,9 @@ pub fn install_tray(
     app: &AppHandle,
     snapshot: &TraySnapshot,
     language: ResolvedAppLanguage,
+    accounts: Option<&AccountsPresentation>,
 ) -> tauri::Result<()> {
-    let menu = build_menu(app, snapshot, language)?;
+    let menu = build_menu(app, snapshot, language, accounts)?;
     let mut builder = TrayIconBuilder::with_id("main")
         .tooltip("Codex Quota Viewer")
         .menu(&menu)
@@ -181,8 +254,9 @@ pub fn update_tray_menu(
     app: &AppHandle,
     snapshot: &TraySnapshot,
     language: ResolvedAppLanguage,
+    accounts: Option<&AccountsPresentation>,
 ) -> tauri::Result<()> {
-    let menu = build_menu(app, snapshot, language)?;
+    let menu = build_menu(app, snapshot, language, accounts)?;
     if let Some(tray) = app.tray_by_id("main") {
         tray.set_menu(Some(menu))?;
     }
@@ -195,6 +269,15 @@ mod tests {
     use chrono::Utc;
 
     use crate::quota::{AccountSummary, QuotaSnapshot, QuotaWindow};
+
+    #[test]
+    fn identifies_account_activation_menu_ids() {
+        assert_eq!(
+            account_id_from_menu_id("activate_account:acct-api"),
+            Some("acct-api".to_string())
+        );
+        assert_eq!(account_id_from_menu_id("refresh_quota"), None);
+    }
 
     #[test]
     fn formats_quota_windows() {

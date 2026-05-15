@@ -30,6 +30,7 @@ impl TraySnapshot {
 pub struct AppState {
     pub codex_home: PathBuf,
     pub settings_path: PathBuf,
+    pub accounts_dir: PathBuf,
     pub settings: Mutex<AppSettings>,
     pub settings_load_issue: Mutex<Option<String>>,
     pub tray_snapshot: Mutex<TraySnapshot>,

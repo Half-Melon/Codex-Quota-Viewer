@@ -5,6 +5,8 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Manager};
 
+mod account_activation;
+mod account_commands;
 mod account_models;
 mod account_vault;
 mod app_state;
@@ -99,7 +101,17 @@ async fn update_settings(
 
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![get_settings, update_settings])
+        .invoke_handler(tauri::generate_handler![
+            get_settings,
+            update_settings,
+            account_commands::get_accounts,
+            account_commands::import_current_chatgpt_account,
+            account_commands::add_api_account,
+            account_commands::activate_account,
+            account_commands::rename_account,
+            account_commands::forget_account,
+            account_commands::open_vault_folder
+        ])
         .setup(|app| {
             let app_handle = app.handle().clone();
             let codex_home = resolve_codex_home()
@@ -118,12 +130,14 @@ fn main() {
                 manager_home: app_data_dir.join("SessionManager"),
             };
             let settings_path = app_data_dir.join("settings.json");
+            let accounts_dir = app_data_dir.join("Accounts");
             let settings_result = load_settings(&settings_path);
             let settings = settings_result.settings.clone();
 
             let state: SharedAppState = Arc::new(AppState {
                 codex_home,
                 settings_path,
+                accounts_dir,
                 settings: tauri::async_runtime::Mutex::new(settings.clone()),
                 settings_load_issue: tauri::async_runtime::Mutex::new(settings_result.issue),
                 tray_snapshot: tauri::async_runtime::Mutex::new(TraySnapshot::loading()),
@@ -138,7 +152,16 @@ fn main() {
             app.manage(state.clone());
             let resolved_language =
                 resolve_language(settings.app_language, &system_language_hints());
-            tray::install_tray(&app_handle, &TraySnapshot::loading(), resolved_language)?;
+            let vault = account_vault::AccountVault::new(state.accounts_dir.clone());
+            let accounts =
+                account_commands::build_accounts_presentation(&vault, resolved_language, None)
+                    .ok();
+            tray::install_tray(
+                &app_handle,
+                &TraySnapshot::loading(),
+                resolved_language,
+                accounts.as_ref(),
+            )?;
             spawn_refresh(app_handle.clone(), state.clone());
             start_refresh_scheduler(app_handle, state, settings);
             Ok(())
@@ -158,7 +181,15 @@ pub(crate) fn handle_menu_event(app: &AppHandle, menu_id: &str) {
             let _ = open::that(codex_home);
         }
         MENU_QUIT => spawn_quit(app.clone(), state),
-        _ => {}
+        _ => {
+            if let Some(account_id) = tray::account_id_from_menu_id(menu_id) {
+                account_commands::spawn_activate_account_from_tray(
+                    app.clone(),
+                    state,
+                    account_id,
+                );
+            }
+        }
     }
 }
 
@@ -186,7 +217,7 @@ fn restart_refresh_scheduler(app: AppHandle, state: SharedAppState, settings: Ap
     start_refresh_scheduler(app, state, settings);
 }
 
-async fn current_resolved_language(state: &SharedAppState) -> settings::ResolvedAppLanguage {
+pub(crate) async fn current_resolved_language(state: &SharedAppState) -> settings::ResolvedAppLanguage {
     let settings = state.settings.lock().await;
     resolve_language(settings.app_language, &system_language_hints())
 }
@@ -199,13 +230,15 @@ fn system_language_hints() -> Vec<String> {
         .collect()
 }
 
-async fn update_tray_from_state(app: &AppHandle, state: &SharedAppState) {
+pub(crate) async fn update_tray_from_state(app: &AppHandle, state: &SharedAppState) {
     let snapshot = state.tray_snapshot.lock().await.clone();
     let language = current_resolved_language(state).await;
-    let _ = tray::update_tray_menu(app, &snapshot, language);
+    let vault = account_vault::AccountVault::new(state.accounts_dir.clone());
+    let accounts = account_commands::build_accounts_presentation(&vault, language, None).ok();
+    let _ = tray::update_tray_menu(app, &snapshot, language, accounts.as_ref());
 }
 
-fn spawn_refresh(app: AppHandle, state: SharedAppState) {
+pub(crate) fn spawn_refresh(app: AppHandle, state: SharedAppState) {
     tauri::async_runtime::spawn(async move {
         {
             let mut in_progress = state.refresh_in_progress.lock().await;
