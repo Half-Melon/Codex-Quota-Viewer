@@ -110,11 +110,16 @@ final class BackupManager {
     private let maxRestorePoints = 20
     private let privateDirectoryPermissions = NSNumber(value: Int16(0o700))
     private let privateFilePermissions = NSNumber(value: Int16(0o600))
+    private let protectedRestorePointIDsProvider: () -> Set<String>
 
     let backupsRootURL: URL
 
-    init(backupsRootURL: URL) {
+    init(
+        backupsRootURL: URL,
+        protectedRestorePointIDsProvider: @escaping () -> Set<String> = { [] }
+    ) {
         self.backupsRootURL = backupsRootURL
+        self.protectedRestorePointIDsProvider = protectedRestorePointIDsProvider
 
         encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -224,6 +229,11 @@ final class BackupManager {
         return try loadManifest(at: manifestURL)
     }
 
+    func restorePoint(id: String) throws -> RestorePointManifest {
+        let manifestURL = try restorePointManifestURL(id: id)
+        return try loadManifest(at: manifestURL)
+    }
+
     func restoreLatestRestorePoint() throws -> RestorePointManifest {
         guard let manifestURL = try latestManifestURL() else {
             throw BackupManagerError.noRestorePoint
@@ -237,6 +247,13 @@ final class BackupManager {
     func restoreRestorePoint(_ manifest: RestorePointManifest) throws -> RestorePointManifest {
         let restorePointURL = backupsRootURL.appendingPathComponent(manifest.id, isDirectory: true)
         return try restoreRestorePoint(manifest, restorePointURL: restorePointURL)
+    }
+
+    @discardableResult
+    func restoreRestorePoint(id: String) throws -> RestorePointManifest {
+        let manifestURL = try restorePointManifestURL(id: id)
+        let manifest = try loadManifest(at: manifestURL)
+        return try restoreRestorePoint(manifest, restorePointURL: manifestURL.deletingLastPathComponent())
     }
 
     @discardableResult
@@ -311,13 +328,27 @@ final class BackupManager {
         return try decoder.decode(RestorePointManifest.self, from: Data(contentsOf: manifestURL))
     }
 
+    private func restorePointManifestURL(id: String) throws -> URL {
+        let sanitizedID = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sanitizedID.isEmpty,
+              sanitizedID == URL(fileURLWithPath: sanitizedID).lastPathComponent else {
+            throw BackupManagerError.manifestMissing(id)
+        }
+
+        return backupsRootURL
+            .appendingPathComponent(sanitizedID, isDirectory: true)
+            .appendingPathComponent("manifest.json", isDirectory: false)
+    }
+
     private func pruneIfNeeded() throws {
         let restorePointURLs = try sortedRestorePointDirectoryURLs()
         guard restorePointURLs.count > maxRestorePoints else {
             return
         }
 
-        for restorePointURL in restorePointURLs.dropFirst(maxRestorePoints) {
+        let protectedIDs = protectedRestorePointIDsProvider()
+        for restorePointURL in restorePointURLs.dropFirst(maxRestorePoints)
+            where !protectedIDs.contains(restorePointURL.lastPathComponent) {
             try? fileManager.removeItem(at: restorePointURL)
         }
     }

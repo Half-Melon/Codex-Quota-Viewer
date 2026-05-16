@@ -313,6 +313,24 @@ func buildMaintenanceMenu(
     return submenu
 }
 
+@MainActor
+func makeChatGPTProviderModeMenuItem(
+    presentation: ChatGPTProviderModeMenuPresentation,
+    target: AnyObject?,
+    action: Selector
+) -> NSMenuItem {
+    let item = NSMenuItem(
+        title: presentation.title,
+        action: presentation.isEnabled ? action : nil,
+        keyEquivalent: ""
+    )
+    item.target = target
+    item.isEnabled = presentation.isEnabled
+    item.state = presentation.isActive ? .on : .off
+    item.toolTip = presentation.tooltip
+    return item
+}
+
 private func refreshItemTitle(refreshProgress: RefreshProgress?) -> String {
     guard let refreshProgress else {
         return AppLocalization.localized(en: "Refreshing…", zh: "刷新中…")

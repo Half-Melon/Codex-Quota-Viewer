@@ -2,12 +2,13 @@ English | [中文](README.zh-CN.md)
 
 # Codex Quota Viewer
 
-> Stable release: `1.1.0`
+> Stable release: `1.2.0`
 >
-> 1.1.0 update:
-> - Makes quota refresh and reusable RPC channel lifecycle more stable, and adds visible refresh progress in maintenance actions.
-> - Hardens safe account switching with better restore-point file coverage, thread/provider repair flow, and normalized profile path handling.
-> - Splits the Settings UI into dedicated views and localizes local-thread inspection messages for the released app.
+> 1.2.0 update:
+> - Adds **third-party Provider mode** for ChatGPT logins, so Codex can stay signed in with the normal ChatGPT account while requests use a saved API account.
+> - Adds a menu action that changes between **Switch to Third-party Provider...** and **Switch Back to Normal Account** based on the current mode.
+> - Lets you choose the third-party Provider from saved API accounts, then writes the required `base_url` and API key into `config.toml` safely.
+> - Protects Provider-mode entry and exit with restore points, rollout provider synchronization, local thread repair, and rollback-safe session history handling.
 
 Codex Quota Viewer is a native macOS menu bar app for people who use Codex and
 want everything in one place: current quota, saved accounts, safe account

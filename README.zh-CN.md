@@ -2,12 +2,13 @@
 
 # Codex Quota Viewer
 
-> 当前正式版：`1.1.0`
+> 当前正式版：`1.2.0`
 >
-> 1.1.0 更新：
-> - 提升额度刷新与复用 RPC 通道生命周期的稳定性，并为 Maintenance 刷新动作补充可见进度提示。
-> - 强化安全切换流程，补齐 restore point 保护覆盖、线程/provider 修复链路，以及 Profile 路径规范化处理。
-> - 将 Settings 界面拆分为独立视图，并补齐本地线程检查相关文案的应用内中英文本地化。
+> 1.2.0 更新：
+> - 新增 **第三方 Provider 模式**：Codex 保持普通 ChatGPT 账号登录，但实际请求使用已保存的 API 账号。
+> - 菜单新增模式切换入口，会根据当前状态显示 **切换为第三方 Provider…** 或 **切换回正常账号**。
+> - 切换时可从已保存 API 账号中选择 Provider，并安全写入 `config.toml` 所需的 `base_url` 与 API Key。
+> - 进入和退出该模式都会创建 restore point，并同步 rollout provider、修复本地线程状态，确保切换 API 与普通账号登录时不丢会话历史。
 
 Codex Quota Viewer 是一个原生 macOS 菜单栏应用。它把 Codex 用户最常做的几件
 事放到一个入口里：看当前额度、管理多个账号、安全切换账号、浏览和修复本地会话。

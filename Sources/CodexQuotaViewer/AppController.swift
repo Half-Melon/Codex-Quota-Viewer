@@ -93,6 +93,7 @@ final class AppController: NSObject, NSMenuDelegate {
     private let desktopController = CodexDesktopController()
     private let statusEvaluator = StatusEvaluator()
     private let apiAccountPromptController = APIAccountPromptController()
+    private let chatGPTProviderModePromptController = ChatGPTProviderModePromptController()
     private lazy var currentSnapshotFetcher = CurrentSnapshotFetcher(
         fetchFromRuntimeMaterial: { [rpcClient] runtimeMaterial in
             try await rpcClient.fetchSnapshot(
@@ -106,7 +107,10 @@ final class AppController: NSObject, NSMenuDelegate {
     )
     private lazy var quotaCacheStore = VaultQuotaCacheStore(cacheURL: store.quotaCacheURL)
     private lazy var backupManager = BackupManager(
-        backupsRootURL: store.baseURL.appendingPathComponent("SwitchBackups", isDirectory: true)
+        backupsRootURL: store.baseURL.appendingPathComponent("SwitchBackups", isDirectory: true),
+        protectedRestorePointIDsProvider: { [store] in
+            activeChatGPTProviderModeRestorePointIDs(baseURL: store.baseURL)
+        }
     )
     private lazy var repairClient = SessionManagerRepairClient(launcher: sessionManagerLauncher)
     private lazy var switchOrchestrator = SwitchOrchestrator(
@@ -119,6 +123,14 @@ final class AppController: NSObject, NSMenuDelegate {
     )
     private lazy var rollbackManager = RollbackManager(
         backupManager: backupManager,
+        desktopController: desktopController,
+        quotaChannelInvalidator: rpcClient
+    )
+    private lazy var chatGPTProviderModeManager = ChatGPTProviderModeManager(
+        store: store,
+        backupManager: backupManager,
+        rolloutSynchronizer: RolloutProviderSynchronizer(),
+        repairClient: repairClient,
         desktopController: desktopController,
         quotaChannelInvalidator: rpcClient
     )
@@ -176,6 +188,7 @@ final class AppController: NSObject, NSMenuDelegate {
     private var availableSwitchTargets: [ProviderProfile] = []
     private var quotaOverviewState: QuotaOverviewState?
     private var safeSwitchCenterState: SafeSwitchCenterState?
+    private var chatGPTProviderModeState: ChatGPTProviderModeState?
     private var statusNotice: MenuNotice?
     private var loadWarningNotice: String?
     private var localizationNotice: MenuNotice?
@@ -284,6 +297,7 @@ final class AppController: NSObject, NSMenuDelegate {
 
         loadReadOnlyState()
         synchronizeLocalizationState()
+        refreshChatGPTProviderModeState()
         let currentRuntimeMaterial = try? store.currentRuntimeMaterial()
         profileRefreshController.prepareInitialState(currentRuntimeMaterial: currentRuntimeMaterial)
         applySettingsSideEffects(showErrorsInStatus: false)
@@ -378,6 +392,10 @@ final class AppController: NSObject, NSMenuDelegate {
         profileRefreshController.refreshCurrentProfileOnly()
     }
 
+    private func refreshChatGPTProviderModeState() {
+        chatGPTProviderModeState = try? chatGPTProviderModeManager.currentModeState()
+    }
+
     private func refreshSavedAccountsOnMenuOpen() {
         profileRefreshController.refreshSavedAccountsOnMenuOpen()
     }
@@ -408,6 +426,9 @@ final class AppController: NSObject, NSMenuDelegate {
         addQuotaOverviewSection()
 
         menu.addItem(.separator())
+        menu.addItem(makeChatGPTProviderModeActionItem())
+
+        menu.addItem(.separator())
         let maintenanceItem = NSMenuItem(
             title: AppLocalization.localized(en: "Maintenance", zh: "维护"),
             action: nil,
@@ -431,7 +452,7 @@ final class AppController: NSObject, NSMenuDelegate {
     private func updateMenuInPlaceIfPossible() -> Bool {
         guard visibleMenuNotice() == nil,
               let quotaSectionEndIndex = menu.items.firstIndex(where: \.isSeparatorItem),
-              menu.items.count == quotaSectionEndIndex + 4 else {
+              menu.items.count == quotaSectionEndIndex + 6 else {
             return false
         }
 
@@ -447,7 +468,14 @@ final class AppController: NSObject, NSMenuDelegate {
             return false
         }
 
-        let maintenanceItem = menu.items[quotaSectionEndIndex + 1]
+        let providerModeItem = menu.items[quotaSectionEndIndex + 1]
+        configureChatGPTProviderModeMenuItem(providerModeItem)
+
+        guard menu.items[quotaSectionEndIndex + 2].isSeparatorItem else {
+            return false
+        }
+
+        let maintenanceItem = menu.items[quotaSectionEndIndex + 3]
         maintenanceItem.title = AppLocalization.localized(en: "Maintenance", zh: "维护")
         maintenanceItem.action = nil
         maintenanceItem.target = nil
@@ -455,13 +483,13 @@ final class AppController: NSObject, NSMenuDelegate {
         maintenanceItem.isEnabled = true
         maintenanceItem.submenu = makeMaintenanceMenu()
 
-        let settingsItem = menu.items[quotaSectionEndIndex + 2]
+        let settingsItem = menu.items[quotaSectionEndIndex + 4]
         settingsItem.title = AppLocalization.localized(en: "Settings…", zh: "设置…")
         settingsItem.action = #selector(openSettingsTapped)
         settingsItem.target = self
         settingsItem.isEnabled = true
 
-        let quitItem = menu.items[quotaSectionEndIndex + 3]
+        let quitItem = menu.items[quotaSectionEndIndex + 5]
         quitItem.title = AppLocalization.localized(en: "Quit", zh: "退出")
         quitItem.action = #selector(quitTapped)
         quitItem.target = self
@@ -590,6 +618,37 @@ final class AppController: NSObject, NSMenuDelegate {
         }
     }
 
+    private func makeChatGPTProviderModeActionItem() -> NSMenuItem {
+        makeChatGPTProviderModeMenuItem(
+            presentation: chatGPTProviderModeMenuPresentation(),
+            target: self,
+            action: #selector(chatGPTProviderModeTapped)
+        )
+    }
+
+    private func configureChatGPTProviderModeMenuItem(_ item: NSMenuItem) {
+        let presentation = chatGPTProviderModeMenuPresentation()
+        item.title = presentation.title
+        item.action = presentation.isEnabled ? #selector(chatGPTProviderModeTapped) : nil
+        item.target = self
+        item.representedObject = nil
+        item.isEnabled = presentation.isEnabled
+        item.state = presentation.isActive ? .on : .off
+        item.toolTip = presentation.tooltip
+        item.submenu = nil
+        item.view = nil
+    }
+
+    private func chatGPTProviderModeMenuPresentation() -> ChatGPTProviderModeMenuPresentation {
+        buildChatGPTProviderModeMenuPresentation(
+            modeState: chatGPTProviderModeState,
+            currentAuthMode: currentProviderProfile?.authMode
+                ?? (try? store.currentAuthData()).map(resolveAuthMode(authData:)),
+            savedAPIAccountCount: vaultSnapshot?.accounts.filter { $0.metadata.authMode == .apiKey }.count ?? 0,
+            isPerformingSafeSwitchOperation: isPerformingSafeSwitchOperation
+        )
+    }
+
     private func makeMaintenanceMenu() -> NSMenu {
         buildMaintenanceMenu(
             isRefreshing: isRefreshing,
@@ -683,16 +742,11 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private var currentExpectedProviderID: String? {
-        if let providerID = currentProviderProfile?.threadProviderID,
-           !providerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return providerID
-        }
-
-        if currentProviderProfile?.authMode == .chatgpt {
-            return "openai"
-        }
-
-        return nil
+        currentThreadSyncExpectedProviderID(
+            currentProfile: currentProviderProfile,
+            chatGPTProviderModeState: chatGPTProviderModeState,
+            currentConfigData: profileRefreshController.currentRuntimeMaterial?.configData
+        )
     }
 
     private func confirmSafeSwitch(
@@ -737,6 +791,65 @@ final class AppController: NSObject, NSMenuDelegate {
                     : AppLocalization.localized(en: "Codex was not running when this backup was created.", zh: "创建这份备份时 Codex 并未运行。"),
             ].joined(separator: "\n")
             alert.addButton(withTitle: AppLocalization.localized(en: "Rollback", zh: "回滚"))
+            alert.addButton(withTitle: AppLocalization.localized(en: "Cancel", zh: "取消"))
+            return alert.runModal() == .alertFirstButtonReturn
+        }
+    }
+
+    private func confirmEnterChatGPTProviderMode(record: VaultAccountRecord) -> Bool {
+        let preview: ChatGPTProviderModePreview
+        do {
+            preview = try chatGPTProviderModeManager.preview(providerRecord: record)
+        } catch {
+            presentSafeSwitchNotice(
+                MenuNotice(kind: .error, message: userFacingMessage(for: error)),
+                lifetime: .persistent
+            )
+            rebuildMenu(reason: "chatgpt-provider-preview-error")
+            return false
+        }
+
+        return foregroundPresentationController.runModal {
+            let alert = NSAlert()
+            alert.messageText = AppLocalization.localized(
+                en: "Switch to third-party Provider?",
+                zh: "要切换为第三方 Provider 吗？"
+            )
+            alert.informativeText = [
+                AppLocalization.localized(
+                    en: "Provider: \(record.metadata.displayName)",
+                    zh: "Provider：\(record.metadata.displayName)"
+                ),
+                AppLocalization.localized(
+                    en: "Codex will keep the current ChatGPT login and write the selected API endpoint into config.toml.",
+                    zh: "Codex 会保留当前 ChatGPT 登录，并把所选 API 端点写入 config.toml。"
+                ),
+                AppLocalization.localized(
+                    en: "Files to back up: \(preview.filesToBackup.count)",
+                    zh: "需备份文件：\(preview.filesToBackup.count)"
+                ),
+                preview.codexWasRunning
+                    ? AppLocalization.localized(en: "Codex will be closed and reopened automatically.", zh: "Codex 会自动关闭并重新打开。")
+                    : AppLocalization.localized(en: "Codex is not running, so no reopen is needed.", zh: "Codex 当前未运行，无需重新打开。"),
+            ].joined(separator: "\n")
+            alert.addButton(withTitle: AppLocalization.localized(en: "Switch", zh: "切换"))
+            alert.addButton(withTitle: AppLocalization.localized(en: "Cancel", zh: "取消"))
+            return alert.runModal() == .alertFirstButtonReturn
+        }
+    }
+
+    private func confirmExitChatGPTProviderMode() -> Bool {
+        foregroundPresentationController.runModal {
+            let alert = NSAlert()
+            alert.messageText = AppLocalization.localized(
+                en: "Switch back to normal account?",
+                zh: "要切换回正常账号吗？"
+            )
+            alert.informativeText = AppLocalization.localized(
+                en: "CodexQuotaViewer will restore the auth.json and config.toml captured before third-party Provider mode was enabled.",
+                zh: "CodexQuotaViewer 会恢复开启第三方 Provider 模式前备份的 auth.json 和 config.toml。"
+            )
+            alert.addButton(withTitle: AppLocalization.localized(en: "Switch Back", zh: "切换回正常账号"))
             alert.addButton(withTitle: AppLocalization.localized(en: "Cancel", zh: "取消"))
             return alert.runModal() == .alertFirstButtonReturn
         }
@@ -823,6 +936,140 @@ final class AppController: NSObject, NSMenuDelegate {
                     self.localizedErrorNotice(
                         en: "Add API account failed",
                         zh: "添加 API 账号失败",
+                        error: error
+                    ),
+                    lifetime: .persistent
+                )
+            }
+        }
+    }
+
+    @objc
+    private func chatGPTProviderModeTapped() {
+        refreshChatGPTProviderModeState()
+        if chatGPTProviderModeState != nil {
+            switchBackFromChatGPTProviderMode()
+        } else {
+            switchToChatGPTProviderMode()
+        }
+    }
+
+    private func switchToChatGPTProviderMode() {
+        guard !isPerformingSafeSwitchOperation,
+              let snapshot = vaultSnapshot,
+              let selectedRecord = chatGPTProviderModePromptController.promptForProvider(
+                records: snapshot.accounts,
+                runModalPresentation: { [weak self] body in
+                    guard let self else { return nil }
+                    return self.foregroundPresentationController.runModal(body)
+                }
+              ),
+              beginForegroundOperation(.chatGPTProviderMode) else {
+            return
+        }
+
+        guard confirmEnterChatGPTProviderMode(record: selectedRecord) else {
+            endForegroundOperation(.chatGPTProviderMode)
+            return
+        }
+
+        presentSafeSwitchNotice(
+            MenuNotice(
+                kind: .info,
+                message: AppLocalization.localized(
+                    en: "Switching to third-party Provider…",
+                    zh: "正在切换为第三方 Provider…"
+                )
+            ),
+            lifetime: .operationBound
+        )
+        rebuildMenu(reason: "chatgpt-provider-mode-enter-start")
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.endForegroundOperation(.chatGPTProviderMode)
+                self.refreshAllProfiles()
+            }
+
+            do {
+                let result = try await self.chatGPTProviderModeManager.enter(providerRecord: selectedRecord)
+                self.chatGPTProviderModeState = try? self.chatGPTProviderModeManager.currentModeState()
+                self.presentSafeSwitchNotice(
+                    MenuNotice(
+                        kind: .info,
+                        message: AppLocalization.localized(
+                            en: "Third-party Provider enabled: \(result.providerDisplayName). Restore point \(result.restorePoint.id) is ready.",
+                            zh: "已切换为第三方 Provider：\(result.providerDisplayName)。还原点 \(result.restorePoint.id) 已创建。"
+                        )
+                    ),
+                    lifetime: .timed(4)
+                )
+                self.cachedThreadSyncStatus = .healthy(expectedProvider: "OpenAI")
+            } catch {
+                self.presentSafeSwitchNotice(
+                    self.localizedErrorNotice(
+                        en: "Third-party Provider switch failed",
+                        zh: "第三方 Provider 切换失败",
+                        error: error,
+                        suffixEN: ". Use “Rollback Last Change” if needed.",
+                        suffixZH: "。如有需要，请使用“回滚上次变更”。"
+                    ),
+                    lifetime: .persistent
+                )
+            }
+        }
+    }
+
+    private func switchBackFromChatGPTProviderMode() {
+        guard beginForegroundOperation(.chatGPTProviderMode) else {
+            return
+        }
+
+        guard confirmExitChatGPTProviderMode() else {
+            endForegroundOperation(.chatGPTProviderMode)
+            return
+        }
+
+        presentSafeSwitchNotice(
+            MenuNotice(
+                kind: .info,
+                message: AppLocalization.localized(
+                    en: "Switching back to normal account…",
+                    zh: "正在切换回正常账号…"
+                )
+            ),
+            lifetime: .operationBound
+        )
+        rebuildMenu(reason: "chatgpt-provider-mode-exit-start")
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.endForegroundOperation(.chatGPTProviderMode)
+                self.refreshAllProfiles()
+            }
+
+            do {
+                let result = try await self.chatGPTProviderModeManager.exit()
+                self.chatGPTProviderModeState = nil
+                self.presentSafeSwitchNotice(
+                    MenuNotice(
+                        kind: .info,
+                        message: AppLocalization.localized(
+                            en: "Normal account restored. Restore point \(result.restorePoint.id) was applied.",
+                            zh: "已切换回正常账号。已恢复还原点 \(result.restorePoint.id)。"
+                        )
+                    ),
+                    lifetime: .timed(4)
+                )
+                self.cachedThreadSyncStatus = nil
+            } catch {
+                self.refreshChatGPTProviderModeState()
+                self.presentSafeSwitchNotice(
+                    self.localizedErrorNotice(
+                        en: "Switch back failed",
+                        zh: "切换回正常账号失败",
                         error: error
                     ),
                     lifetime: .persistent
@@ -937,6 +1184,22 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private func switchSafely(to targetProfile: ProviderProfile) {
+        refreshChatGPTProviderModeState()
+        guard chatGPTProviderModeState == nil else {
+            presentSafeSwitchNotice(
+                MenuNotice(
+                    kind: .warning,
+                    message: AppLocalization.localized(
+                        en: "Switch back to the normal account before changing saved accounts.",
+                        zh: "请先切换回正常账号，再切换其他已保存账号。"
+                    )
+                ),
+                lifetime: .persistent
+            )
+            rebuildMenu(reason: "chatgpt-provider-mode-blocked-account-switch")
+            return
+        }
+
         guard beginForegroundOperation(.safeSwitch) else {
             return
         }
@@ -1314,6 +1577,7 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private func applyVaultPresentationStateUpdates(now: Date = Date()) {
+        refreshChatGPTProviderModeState()
         refreshSafeSwitchCenterState()
         refreshQuotaOverviewState(now: now)
         refreshSettingsAccountPanel()
@@ -1401,6 +1665,7 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private func refreshTimeSensitivePresentationState(now: Date = Date()) {
+        refreshChatGPTProviderModeState()
         normalizeTransientMenuNotices(now: now)
         refreshQuotaOverviewState(now: now)
         updateStatusTitle()

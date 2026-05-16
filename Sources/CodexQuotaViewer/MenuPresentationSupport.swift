@@ -114,6 +114,13 @@ struct QuotaOverviewRowPresentation: Equatable {
     let accessibilityLabel: String
 }
 
+struct ChatGPTProviderModeMenuPresentation: Equatable {
+    let title: String
+    let isEnabled: Bool
+    let isActive: Bool
+    let tooltip: String?
+}
+
 func buildSettingsAccountSections(
     _ inputs: [SettingsAccountPresentationInput]
 ) -> [SettingsAccountSection] {
@@ -249,6 +256,44 @@ func buildQuotaOverviewRowPresentation(
         isEnabled: !tile.profile.isCurrent && !isPerformingSafeSwitchOperation,
         triggersDirectSwitch: !tile.profile.isCurrent && !isPerformingSafeSwitchOperation,
         accessibilityLabel: accessibilityLabel
+    )
+}
+
+func buildChatGPTProviderModeMenuPresentation(
+    modeState: ChatGPTProviderModeState?,
+    currentAuthMode: CodexAuthMode?,
+    savedAPIAccountCount: Int,
+    isPerformingSafeSwitchOperation: Bool
+) -> ChatGPTProviderModeMenuPresentation {
+    let isActive = modeState != nil
+    let title = isActive
+        ? AppLocalization.localized(en: "Switch Back to Normal Account", zh: "切换回正常账号")
+        : AppLocalization.localized(en: "Switch to Third-party Provider…", zh: "切换为第三方 Provider…")
+
+    let disabledReason: String?
+    if isPerformingSafeSwitchOperation {
+        disabledReason = AppLocalization.localized(en: "Another operation is running.", zh: "另一个操作正在进行。")
+    } else if isActive {
+        disabledReason = nil
+    } else if currentAuthMode != .chatgpt {
+        disabledReason = AppLocalization.localized(
+            en: "Available only when the current Codex login is ChatGPT.",
+            zh: "仅当前 Codex 为 ChatGPT 登录时可用。"
+        )
+    } else if savedAPIAccountCount == 0 {
+        disabledReason = AppLocalization.localized(
+            en: "Add a saved API account first.",
+            zh: "请先添加一个已保存的 API 账号。"
+        )
+    } else {
+        disabledReason = nil
+    }
+
+    return ChatGPTProviderModeMenuPresentation(
+        title: title,
+        isEnabled: disabledReason == nil,
+        isActive: isActive,
+        tooltip: disabledReason
     )
 }
 
