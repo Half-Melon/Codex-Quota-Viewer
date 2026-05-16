@@ -240,6 +240,44 @@ func apiStatusTextUsesAPIAsPrimaryLabel() {
 }
 
 @Test
+func chatGPTProviderModeMenuPresentationUsesAccountStateSpecificTitles() {
+    withExclusiveAppLocalization {
+        AppLocalization.setPreferredLanguage(.zh, preferredLanguages: ["zh-Hans-CN"])
+
+        let inactive = buildChatGPTProviderModeMenuPresentation(
+            modeState: nil,
+            currentAuthMode: .chatgpt,
+            savedAPIAccountCount: 1,
+            isPerformingSafeSwitchOperation: false
+        )
+        let apiLoginInactive = buildChatGPTProviderModeMenuPresentation(
+            modeState: nil,
+            currentAuthMode: .apiKey,
+            savedAPIAccountCount: 1,
+            isPerformingSafeSwitchOperation: false
+        )
+        let active = buildChatGPTProviderModeMenuPresentation(
+            modeState: ChatGPTProviderModeState(
+                restorePointID: "restore-1",
+                providerAccountID: "api-1",
+                providerDisplayName: "api.example.com",
+                activatedAt: Date(timeIntervalSince1970: 1_800_000_000)
+            ),
+            currentAuthMode: .chatgpt,
+            savedAPIAccountCount: 1,
+            isPerformingSafeSwitchOperation: false
+        )
+
+        #expect(inactive.title == "切换为第三方 Provider…")
+        #expect(inactive.isEnabled)
+        #expect(apiLoginInactive.title == "切换为第三方 Provider…")
+        #expect(apiLoginInactive.isEnabled == false)
+        #expect(active.title == "切换回正常账号")
+        #expect(active.isEnabled)
+    }
+}
+
+@Test
 func allAccountsMenuItemPresentationUsesCurrentCheckmarkAndDirectSwitchForOthers() {
     withExclusiveAppLocalization {
         AppLocalization.setPreferredLanguage(.en, preferredLanguages: ["en-US"])

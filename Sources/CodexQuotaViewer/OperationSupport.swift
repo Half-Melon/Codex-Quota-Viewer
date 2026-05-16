@@ -4,6 +4,7 @@ enum ForegroundOperation: Equatable {
     case apiOnboarding
     case chatGPTBrowserLogin
     case chatGPTDeviceLogin
+    case chatGPTProviderMode
     case safeSwitch
     case repair
     case rollback
